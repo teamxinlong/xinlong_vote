@@ -24,7 +24,7 @@
   <!-- 입력창 (엔터/버튼 모두 지원) -->
   <div class="w-full max-w-xl">
     <form id="chatForm" class="flex items-center space-x-2">
-      <input type="text" id="chatInput" placeholder="부여번호(ex-aa0001) 입력 또는 인증샷을 붙여넣으세요..." class="flex-grow px-3 py-2 border rounded" autocomplete="off"/>
+      <input type="text" id="chatInput" placeholder="고유번호(ex-aa0001) 입력 또는 인증샷을 붙여넣으세요..." class="flex-grow px-3 py-2 border rounded" autocomplete="off"/>
       <button type="submit" id="sendBtn" class="bg-blue-600 text-white px-4 py-2 rounded btn">입력</button>
     </form>
   </div>
@@ -32,16 +32,16 @@
   <!-- 결과 테이블 -->
   <div id="resultPanel" class="w-full max-w-xl mt-4">
     <div class="flex items-center justify-between mb-2">
-      <div class="text-sm text-gray-700">부여번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
+      <div class="text-sm text-gray-700">고유번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
       <button id="copyAllBtn" class="text-xs px-3 py-1 rounded border btn">전체 복사</button>
     </div>
     <div class="bg-white rounded shadow overflow-auto">
       <table class="min-w-full text-sm">
         <thead class="bg-gray-50">
           <tr>
-            <th class="px-3 py-2 text-left">부여번호</th>
-            <th class="px-3 py-2 text-left">날짜</th>
             <th class="px-3 py-2 text-left">고유번호</th>
+            <th class="px-3 py-2 text-left">날짜</th>
+            <th class="px-3 py-2 text-left">시리얼넘버</th>
           </tr>
         </thead>
         <tbody id="resultTbody">
@@ -205,7 +205,7 @@
         var assign = parseAssign(text);
         if (assign) {
           setAssign(assign); // 리셋 + 설정
-          appendMessage('bot', '부여번호 ' + assign + ' 입니다.');
+          appendMessage('bot', '고유번호 ' + assign + ' 입니다.');
         } else {
           appendMessage('bot', '잘못된 접근입니다.'); // 테이블 유지
         }
@@ -326,7 +326,7 @@
             appendMessage('user', '<img src="'+ url +'" class="max-w-xs mt-1 rounded border shadow">');
 
             if (!currentAssign){
-              appendMessage('bot', '먼저 부여번호를 입력하세요. 예) <b>AA0001</b>');
+              appendMessage('bot', '먼저 고유번호를 입력하세요. 예) <b>AA0001</b>');
               continue;
             }
 
@@ -351,7 +351,7 @@
         var assign = parseAssign(text);
         if (assign) {
           setAssign(assign);
-          appendMessage('bot', '부여번호 ' + assign + ' 입니다.');
+          appendMessage('bot', '고유번호 ' + assign + ' 입니다.');
         } else {
           appendMessage('bot', '잘못된 접근입니다.');
         }
