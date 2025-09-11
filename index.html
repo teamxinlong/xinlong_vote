@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>투표검수 OCR 챗봇</title>
+  <title>팀씬롱 투표검수 시스템</title>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <style>
@@ -13,12 +13,12 @@
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-  <h1 class="text-2xl font-bold mb-4">💬 투표검수 OCR 챗봇수정</h1>
+  <h1 class="text-2xl font-bold mb-4">💬 팀씬롱 투표 검수 시스템</h1>
 
   <div id="chatbox" class="w-full max-w-xl bg-white p-4 rounded shadow space-y-4 mb-4"></div>
 
   <div class="w-full max-w-xl flex items-center space-x-2">
-    <input type="text" id="chatInput" placeholder="메시지를 입력하거나 이미지를 붙여넣으세요..." class="flex-grow px-3 py-2 border rounded" />
+    <input type="text" id="chatInput" placeholder="이미지를 붙여넣으세요..." class="flex-grow px-3 py-2 border rounded" />
     <button id="sendBtn" class="bg-blue-600 text-white px-4 py-2 rounded btn">입력</button>
   </div>
 
