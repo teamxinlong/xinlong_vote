@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>투표검수 OCR 챗봇</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    #chatbox { height: 60vh; overflow-y: auto; }
+    pre { white-space: pre; }
+    .btn { cursor: pointer; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
+  <h1 class="text-2xl font-bold mb-4">💬 투표검수 OCR 챗봇</h1>
+
+  <div id="chatbox" class="w-full max-w-xl bg-white p-4 rounded shadow space-y-4 mb-4"></div>
+
+  <div class="w-full max-w-xl flex items-center space-x-2">
+    <input type="text" id="chatInput" placeholder="이미지를 붙여넣으세요... 또는 부여번호(AA1234)를 입력" class="flex-grow px-3 py-2 border rounded" />
+    <button id="sendBtn" class="bg-blue-600 text-white px-4 py-2 rounded btn">입력</button>
+  </div>
+
+  <!-- 결과 패널: 부여번호 / 날짜 / 고유번호 테이블 & 전체복사 -->
+  <div id="resultPanel" class="w-full max-w-xl mt-4">
+    <div class="flex items-center justify-between mb-2">
+      <div class="text-sm text-gray-700">부여번호: <span id="assignLabel" class="font-mono font-semibold">미설정</span></div>
+      <button id="copyAllBtn" class="text-xs px-3 py-1 rounded border btn">전체 복사</button>
+    </div>
+    <div class="bg-white rounded shadow overflow-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-3 py-2 text-left">부여번호</th>
+            <th class="px-3 py-2 text-left">날짜</th>
+            <th class="px-3 py-2 text-left">고유번호</th>
+          </tr>
+        </thead>
+        <tbody id="resultTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const chatbox = document.getElementById('chatbox');
+    const chatInput = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('sendBtn');
+
+    const assignLabel = document.getElementById('assignLabel');
+    const copyAllBtn = document.getElementById('copyAllBtn');
+    const resultTbody = document.getElementById('resultTbody');
+
+    );
+      } catch (_) {}
+    }
+
+    // 공용: 텍스트를 시스템 클립보드로 복사 (탭 보존)
+    async function copyToClipboard(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) {}
+      // fallback
+      const ta = document.createElement('textarea');
+      ta.value = text; // \t 포함 원본 문자열
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch(e) {}
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    // ====== 부여번호 & 결과 테이블 상태 ======
+    let currentAssign = null; // 'AA1234'
+    const rows = []; // { assign, date, code }
+
+    function parseAssign(text){
+      const m = (text || '').match(/([A-Za-z]{2}\d{4})/);
+      return m ? m[1].toUpperCase() : null;
+    }
+
+    function setAssign(assign){
+      currentAssign = assign;
+      assignLabel.textContent = assign || '미설정';
+      // 리셋
+      rows.length = 0;
+      renderTable();
+    }
+
+    function addRow(date, code){
+      rows.push({ assign: currentAssign, date, code });
+      renderTable();
+    }
+
+    function renderTable(){
+      if (!rows.length){
+        resultTbody.innerHTML = `<tr><td class="px-3 py-2 text-gray-400" colspan="3">데이터 없음</td></tr>`;
+        return;
+      }
+      resultTbody.innerHTML = rows.map(r => `
+        <tr class="border-t">
+          <td class="px-3 py-2 font-mono">${r.assign}</td>
+          <td class="px-3 py-2 font-mono">${r.date}</td>
+          <td class="px-3 py-2 font-mono">${r.code}</td>
+        </tr>
+      `).join('');
+    }
+
+    copyAllBtn.addEventListener('click', async () => {
+      const tsv = rows.map(r => `${r.assign}\t${r.date}\t${r.code}`).join('\n');
+      const ok = await copyToClipboard(tsv);
+      const old = copyAllBtn.innerText;
+      copyAllBtn.innerText = ok ? '복사됨' : '복사실패';
+      setTimeout(() => copyAllBtn.innerText = old, 1500);
+    });
+
+    // sender: 'user' | 'bot'
+    // content: HTML or plain text
+    // options: { plainText: boolean, copyText: string }
+    function appendMessage(sender, content, options = {}) {
+      const { plainText = false, copyText = null } = options;
+      const msg = document.createElement('div');
+      msg.className = sender === 'user' ? 'text-left' : 'text-right';
+
+      const wrapper = document.createElement('div');
+      wrapper.className = `inline-block p-2 rounded shadow ${sender === 'user' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800'}`;
+
+      const header = document.createElement('div');
+      header.className = 'flex items-center gap-2 mb-1';
+      const label = document.createElement('strong');
+      label.innerText = sender === 'user' ? '👤 유저:' : '🤖 시스템:';
+      header.appendChild(label);
+
+      // 복사 버튼 (봇 메시지 + copyText 있을 때만)
+      if (sender === 'bot' && copyText) {
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'ml-2 text-xs px-2 py-1 rounded border btn';
+        copyBtn.innerText = '복사';
+        copyBtn.addEventListener('click', async () => {
+          const ok = await copyToClipboard(copyText);
+          copyBtn.innerText = ok ? '복사됨' : '복사실패';
+          setTimeout(() => (copyBtn.innerText = '복사'), 1500);
+        });
+        header.appendChild(copyBtn);
+      }
+
+      wrapper.appendChild(header);
+
+      if (plainText) {
+        const pre = document.createElement('pre');
+        pre.textContent = content; // 탭 그대로 보존
+        wrapper.appendChild(pre);
+      } else {
+        const div = document.createElement('div');
+        div.innerHTML = content;
+        wrapper.appendChild(div);
+      }
+
+      msg.appendChild(wrapper);
+      chatbox.appendChild(msg);
+      chatbox.scrollTop = chatbox.scrollHeight;
+    }
+
+    function handleSend() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+      appendMessage('user', text);
+      chatInput.value = '';
+
+      // 입력 텍스트를 부여번호로 인식 (AA1234)
+      const assign = parseAssign(text);
+      if (assign) {
+        setAssign(assign);
+        appendMessage('bot', `부여번호 설정: <b>${assign}</b> (테이블 리셋)`);
+      } else {
+        appendMessage('bot', `부여번호 형식은 <b>AA1234</b> 입니다.`);
+      }
+    }
+
+    sendBtn.addEventListener('click', handleSend);
+    chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSend(); });
+
+    // ---- 전처리/정규화 ----
+    function toHalfwidth(str) {
+      return str.replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+                .replace(/\u3000/g, ' ');
+    }
+    function normalizePunct(str){
+      return str
+        .replace(/[：]/g, ':')
+        .replace(/[．·。]/g, '.')
+        .replace(/[／]/g, '/')
+        .replace(/[－–—]/g, '-')
+        .replace(/[，]/g, ',');
+    }
+    function fixDigitLookalikes(str){
+      return str
+        .replace(/(?<=\d)[Oo](?=\d)/g, '0')
+        .replace(/(?<=\d)[lI](?=\d)/g, '1')
+        .replace(/(?<=\d)[Ss](?=\d)/g, '5');
+    }
+
+    // ---- 날짜/고유번호 추출 (시간 제거) ----
+    function extractFields(raw) {
+      let text = fixDigitLookalikes(normalizePunct(toHalfwidth(raw)));
+      const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+      let voteDate = '', voteNo = '';
+      const whole = lines.join(' ');
+
+      function findDate(s){
+        let m = s.match(/\b(20\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
+        if (!m) m = s.match(/\b(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\b/);
+        if (!m) {
+          const m2 = s.match(/\b(\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
+          if (m2){
+            const y4 = 2000 + Number(m2[1]);
+            return `${y4}.${String(m2[2]).padStart(2,'0')}.${String(m2[3]).padStart(2,'0')}`;
+          }
+          return '';
+        }
+        const y = m[1], mo = String(m[2]).padStart(2,'0'), d = String(m[3]).padStart(2,'0');
+        return `${y}.${mo}.${d}`;
+      }
+
+      function findNo(s){
+        const m = s.match(/No\.?\s*M-([A-Za-z0-9_]{6,64})\b/);
+        return m ? `No.M-${m[1]}` : '';
+      }
+
+      voteDate = findDate(whole);
+      voteNo   = findNo(whole);
+
+      if (!voteDate || !voteNo){
+        for (const line of lines){
+          if (!voteDate) voteDate = findDate(line);
+          if (!voteNo)   voteNo   = findNo(line);
+        }
+      }
+      return { voteDate, voteNo };
+    }
+
+    async function ocrWithTesseract(srcOrFile) {
+      const worker = await Tesseract.createWorker();
+      await worker.load();
+      await worker.loadLanguage('eng+kor');
+      await worker.initialize('eng+kor');
+      await worker.setParameters({
+        tessedit_pageseg_mode: '6',
+        user_defined_dpi: '300',
+        preserve_interword_spaces: '1'
+      });
+      let { data: { text } } = await worker.recognize(srcOrFile);
+      let f = extractFields(text);
+
+      if (!f.voteNo || !f.voteDate) {
+        let url = typeof srcOrFile === 'string' ? srcOrFile : URL.createObjectURL(srcOrFile);
+        const img = new Image(); img.src = url; try { await img.decode(); } catch {}
+        if (img.naturalWidth && img.naturalHeight) {
+          const rectBottom = { left: 0, top: Math.floor(img.naturalHeight*0.65), width: img.naturalWidth, height: Math.floor(img.naturalHeight*0.35)};
+          const rectTop    = { left: 0, top: 0, width: img.naturalWidth, height: Math.floor(img.naturalHeight*0.35)};
+          await worker.setParameters({ tessedit_pageseg_mode: '7' });
+          const { data: { text: tBottom } } = await worker.recognize(url, { rectangle: rectBottom });
+          const fb = extractFields(tBottom);
+          f.voteNo ||= fb.voteNo; f.voteDate ||= fb.voteDate;
+          if (!f.voteDate){
+            const { data: { text: tTop } } = await worker.recognize(url, { rectangle: rectTop });
+            const ft = extractFields(tTop);
+            f.voteDate ||= ft.voteDate;
+          }
+        }
+      }
+
+      await worker.terminate();
+      return f;
+    }
+
+    // 붙여넣기 이미지 → OCR → 날짜\t고유번호 + 복사버튼 + 테이블 누적
+    window.addEventListener('paste', async (e) => {
+      const items = e.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          const url = URL.createObjectURL(file);
+
+          appendMessage('user', `<img src="${url}" class="max-w-xs mt-1 rounded border shadow">`);
+
+          if (!currentAssign){
+            appendMessage('bot', '먼저 부여번호를 입력하세요. 예) <b>AA1234</b>');
+            continue;
+          }
+
+          const { voteDate, voteNo } = await ocrWithTesseract(file);
+          const result = `${voteDate || '❌'}\t${voteNo || '❌'}`;
+          // plainText 출력 + 복사 버튼에 원본 텍스트 연결
+          appendMessage('bot', result, { plainText: true, copyText: result });
+          
+          // 테이블 누적 (둘 다 성공했을 때만)
+          if (voteDate && voteNo){
+            addRow(voteDate, voteNo);
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>
