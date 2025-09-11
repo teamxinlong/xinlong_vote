@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>투표검수 OCR(모바일)</title>
+  <title>허씬롱 마갤 자체제작 투표 집계 시스템</title>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <style>
@@ -15,7 +15,7 @@
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-  <h1 class="text-xl sm:text-2xl font-bold mb-3">📱 투표검수 OCR (모바일)</h1>
+  <h1 class="text-xl sm:text-2xl font-bold mb-3">🐱 허씬롱 마갤 자체제작 투표 집계 시스템(모바일)📱 ✅</h1>
 
   <!-- 채팅 -->
   <div id="chatbox" class="w-full max-w-md bg-white p-3 rounded shadow space-y-3 mb-3"></div>
@@ -24,7 +24,7 @@
   <div class="w-full max-w-md space-y-2">
     <div class="flex gap-2">
       <input id="assignInput" type="text" inputmode="text" autocomplete="off"
-             placeholder="부여번호 (예: AA0001)"
+             placeholder="고유번호 (예: AA0001)"
              class="flex-1 px-3 py-2 border rounded text-base"/>
       <button id="assignBtn" type="button"
               class="btn px-4 py-2 rounded bg-indigo-600 text-white text-base">설정</button>
@@ -42,16 +42,16 @@
   <!-- 결과 테이블 -->
   <div id="resultPanel" class="w-full max-w-md mt-3">
     <div class="flex items-center justify-between mb-1">
-      <div class="text-sm text-gray-700">부여번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
+      <div class="text-sm text-gray-700">고유번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
       <button id="copyAllBtn" class="text-xs px-3 py-1 rounded border btn">전체 복사</button>
     </div>
     <div class="bg-white rounded shadow overflow-auto">
       <table class="min-w-full text-sm">
         <thead class="bg-gray-50">
           <tr>
-            <th class="px-3 py-2 text-left">부여번호</th>
-            <th class="px-3 py-2 text-left">날짜</th>
             <th class="px-3 py-2 text-left">고유번호</th>
+            <th class="px-3 py-2 text-left">날짜</th>
+            <th class="px-3 py-2 text-left">시리얼넘버</th>
           </tr>
         </thead>
         <tbody id="resultTbody">
@@ -263,7 +263,7 @@
           setStatus(`처리 중… (남은 ${queue.length}장)`);
           const url = URL.createObjectURL(file);
           appendMessage('user', `<img src="${url}" class="max-w-[240px] rounded border shadow">`);
-          if (!currentAssign){ appendMessage('bot','먼저 부여번호를 설정하세요. 예) <b>AA0001</b>'); continue; }
+          if (!currentAssign){ appendMessage('bot','먼저 고유번호를 설정하세요. 예) <b>AA0001</b>'); continue; }
 
           const { voteDate, voteNo } = await ocrFile(file);
           const codeOnly = (voteNo||'').replace(/^No\.?\s*/i,'');
@@ -280,7 +280,7 @@
         const s = assignInput.value.trim();
         appendMessage('user', s);
         const assign = parseAssign(s);
-        if (assign){ setAssign(assign); appendMessage('bot', `부여번호 ${assign} 입니다.`); }
+        if (assign){ setAssign(assign); appendMessage('bot', `고유번호 ${assign} 입니다.`); }
         else { appendMessage('bot','잘못된 접근입니다.'); }
         assignInput.value='';
       };
