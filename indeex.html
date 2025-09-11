@@ -3,18 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>DC 허씬롱 마갤 자체 제작 투표검수 시스템</title>
+  <title>투표검수 OCR 챗봇</title>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <style>
     #chatbox { height: 48vh; overflow-y: auto; }
     pre { white-space: pre; }
     .btn { cursor: pointer; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .mono { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-  <h1 class="text-2xl font-bold mb-4">💬 DC 허씬롱 마갤 자체 제작 투표검수 시스템2</h1>
+  <h1 class="text-2xl font-bold mb-4">💬 투표검수 OCR 챗봇3</h1>
 
   <!-- 채팅 -->
   <div id="chatbox" class="w-full max-w-xl bg-white p-4 rounded shadow space-y-4 mb-4"></div>
@@ -46,38 +46,27 @@
   </div>
 
   <script>
-    // 안전하게 DOM 로드 후 시작
+    // 안전하게 즉시 실행
     (function(){
       const chatbox = document.getElementById('chatbox');
       const chatInput = document.getElementById('chatInput');
       const sendBtn = document.getElementById('sendBtn');
-
       const assignLabel = document.getElementById('assignLabel');
       const copyAllBtn = document.getElementById('copyAllBtn');
       const resultTbody = document.getElementById('resultTbody');
 
       // ===== 상태 =====
-      let currentAssign = null;               // 'AA0001'
-      const rows = [];                        // { assign, date, code }
+      let currentAssign = null;         // 'AA0001'
+      const rows = [];                  // { assign, date, code }
 
       // ===== 유틸 =====
       async function copyToClipboard(text) {
-        try {
-          if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-          }
-        } catch(_) {}
+        try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } } catch(_) {}
         const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.focus(); ta.select();
-        let ok = false;
-        try { ok = document.execCommand('copy'); } catch(_) {}
-        document.body.removeChild(ta);
-        return ok;
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        let ok = false; try { ok = document.execCommand('copy'); } catch(_) {}
+        document.body.removeChild(ta); return ok;
       }
 
       function appendMessage(sender, content, { plainText = false, copyText = null } = {}) {
@@ -125,14 +114,13 @@
       // ===== 부여번호/테이블 =====
       function parseAssign(text){
         const s = (text || '').trim();
-        return /^[A-Za-z]{2}\d{4}$/.test(s) ? s : null; // 전체 일치만 인정
+        return /^[A-Za-z]{2}\d{4}$/.test(s) ? s.toUpperCase() : null; // 전체 일치 + 자동 대문자화
       }
 
       function setAssign(assign){
         currentAssign = assign;
         assignLabel.textContent = assign || '미설정';
-        // 테이블 리셋
-        rows.length = 0;
+        rows.length = 0; // 테이블 리셋
         renderTable();
       }
 
@@ -174,16 +162,14 @@
         const assign = parseAssign(text);
         if (assign) {
           setAssign(assign); // 리셋 + 설정
-          appendMessage('bot', `부여번호 ${text} 입니다.`);
+          appendMessage('bot', `부여번호 ${assign} 입니다.`);
         } else {
           appendMessage('bot', '잘못된 접근입니다.'); // 테이블 유지
         }
       }
 
       sendBtn.addEventListener('click', handleSend);
-      chatInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') handleSend();
-      });
+      chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSend(); });
 
       // ===== OCR 전처리 =====
       function toHalfwidth(str) {
@@ -225,10 +211,13 @@
         }
 
         function findNo(s){
-          // 필요시 여기서 No. 제거/형식 보정 가능. 현재는 원문 유지.
+          // 다양한 하이픈/언더바/공백 섞임 허용
           const m = s.match(/N[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,512})/i);
           if (!m) return '';
-          let core = m[1].replace(/\s+/g, '').replace(/[–—]/g, '-').replace(/[^A-Za-z0-9_-]+/g, '');
+          let core = m[1]
+            .replace(/\s+/g, '')
+            .replace(/[–—]/g, '-')
+            .replace(/[^A-Za-z0-9_-]+/g, '');
           return `No.M-${core}`;
         }
 
@@ -291,10 +280,11 @@
             }
 
             const { voteDate, voteNo } = await ocrWithTesseract(file);
-            const result = `${voteDate || '❌'}\t${voteNo || '❌'}`;
+            let codeOnly = (voteNo || '').replace(/^No\.?\s*/i, '');   // ✅ No. 제거
+            const result = `${voteDate || '❌'}\t${codeOnly || '❌'}`;
             appendMessage('bot', result, { plainText: true, copyText: result });
 
-            if (voteDate && voteNo) addRow(voteDate, voteNo);
+            if (voteDate && codeOnly) addRow(voteDate, codeOnly);      // ✅ 테이블에도 No. 제거본 저장
           }
         }
       });
