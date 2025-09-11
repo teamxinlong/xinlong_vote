@@ -210,8 +210,9 @@
           appendMessage('user', `<img src="${url}" class="max-w-xs mt-1 rounded border shadow">`);
 
           const { voteDate, voteNo } = await ocrWithTesseract(file);
-          const result = `${voteDate || '❌'}\t${voteNo || '❌'}`;
-          appendMessage('bot', result, { plainText: true, copyText: result });
+const codeOnly = (voteNo || '').replace(/^No\.?\s*/i, '') || '❌';
+const result = `${voteDate || '❌'}\t${codeOnly}`;
+appendMessage('bot', result, { plainText: true, copyText: result });
         }
       }
     });
