@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>채팅 테스트</title>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>투표검수 OCR 챗봇</title>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <style>
     #chatbox {
       height: 60vh;
@@ -14,8 +14,7 @@
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-
-  <h1 class="text-2xl font-bold mb-4">💬 채팅 OCR 인터페이스</h1>
+  <h1 class="text-2xl font-bold mb-4">💬 투표검수 OCR 챗봇</h1>
 
   <div id="chatbox" class="w-full max-w-xl bg-white p-4 rounded shadow space-y-4 mb-4"></div>
 
@@ -57,7 +56,7 @@
       if (e.key === 'Enter') handleSend();
     });
 
-    // 이미지 붙여넣기 처리 및 OCR 실행
+    // 붙여넣기 이미지 감지 + OCR 분석
     chatInput.addEventListener('paste', async (e) => {
       const items = e.clipboardData.items;
       for (let i = 0; i < items.length; i++) {
@@ -66,19 +65,10 @@
           const file = item.getAsFile();
           const url = URL.createObjectURL(file);
 
-          // 사용자 이미지 출력
-          const imgMsg = document.createElement('div');
-          imgMsg.className = 'text-left';
-          imgMsg.innerHTML = `
-            <div class="inline-block p-2 rounded shadow bg-blue-100 text-blue-900">
-              <strong>👤 유저:</strong><br>
-              <img src="${url}" class="max-w-xs mt-1 rounded border shadow">
-            </div>
-          `;
-          chatbox.appendChild(imgMsg);
-          chatbox.scrollTop = chatbox.scrollHeight;
+          // 유저 이미지 메시지 출력
+          appendMessage('user', `<img src="${url}" class="max-w-xs mt-1 rounded border shadow">`);
 
-          // OCR 실행
+          // OCR 처리
           const worker = Tesseract.createWorker();
           await worker.load();
           await worker.loadLanguage('eng');
@@ -86,30 +76,27 @@
           const { data: { text } } = await worker.recognize(file);
           await worker.terminate();
 
-          // 텍스트 분석: 날짜, 시간, 고유번호
-          const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-          let voteDate = '';
-          let voteTime = '';
-          let voteNo = '';
+          // 정보 추출
+          const lines = text.split(\"\\n\").map(line => line.trim()).filter(Boolean);
+          let voteDate = '', voteTime = '', voteNo = '';
 
           for (let line of lines) {
-            if (!voteDate && /\d{4}[./-]\d{1,2}[./-]\d{1,2}/.test(line)) {
-              voteDate = line.match(/\d{4}[./-]\d{1,2}[./-]\d{1,2}/)[0].replace(/[./]/g, '.');
+            if (!voteDate && /\\d{4}[./-]\\d{1,2}[./-]\\d{1,2}/.test(line)) {
+              voteDate = line.match(/\\d{4}[./-]\\d{1,2}[./-]\\d{1,2}/)[0].replace(/[./]/g, '.');
             }
-            if (!voteTime && /\d{1,2}:\d{2}/.test(line)) {
-              voteTime = line.match(/\d{1,2}:\d{2}/)[0];
+            if (!voteTime && /\\d{1,2}:\\d{2}/.test(line)) {
+              voteTime = line.match(/\\d{1,2}:\\d{2}/)[0];
             }
-            if (!voteNo && /No\.?\s?\d{3,}/i.test(line)) {
-              voteNo = line.match(/No\.?\s?\d{3,}/i)[0].replace(/\s+/g, '');
+            if (!voteNo && /No\\.?\\s?\\d{3,}/i.test(line)) {
+              voteNo = line.match(/No\\.?\\s?\\d{3,}/i)[0].replace(/\\s+/g, '');
             }
           }
 
-          const result = `${voteDate || '❌'}\t${voteTime || '❌'}\t${voteNo || '❌'}`;
+          const result = `${voteDate || '❌'}\\t${voteTime || '❌'}\\t${voteNo || '❌'}`;
           appendMessage('bot', `<code>${result}</code>`);
         }
       }
     });
   </script>
-
 </body>
 </html>
