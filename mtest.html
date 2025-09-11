@@ -176,13 +176,18 @@
                   .replace(/[－–—]/g,'-').replace(/[,，]/g,',');
       }
       function fixDigitLookalikes(str){
-        // 숫자-문자-숫자 패턴만 반복 보정
+        // 숫자-문자-숫자 패턴 + 구분자 주변 'O' 보정(00:02, 0O:O2 등)
         let prev;
         do {
           prev = str;
-          str = str.replace(/(\d)[Oo](\d)/g,'$10$2')
-                   .replace(/(\d)[lI](\d)/g,'$11$2')
-                   .replace(/(\d)[Ss](\d)/g,'$15$2');
+          str = str
+            .replace(/(\d)[Oo](\d)/g,'$10$2')           // 1O2 -> 102
+            .replace(/(\d)[lI](\d)/g,'$11$2')           // 1l2/1I2 -> 112
+            .replace(/(\d)[Ss](\d)/g,'$15$2')           // 1S2 -> 152
+            .replace(/([:.\-시hH])[Oo](\d)/g,'$10$2')   // :O2 / .O2 / 시O2 -> :02 등
+            .replace(/(\d)[Oo]([:.\-시hH])/g,'$10$2')   // 0O: / 0O시 -> 00:
+            .replace(/\b[Oo](\d)/g,'0$1')               // O2 -> 02
+            .replace(/(\d)[Oo]\b/g,'$10');              // 20O -> 200
         } while (str!==prev);
         return str;
       }
@@ -204,11 +209,14 @@
           const y=m[1], mo=String(m[2]).padStart(2,'0'), d=String(m[3]).padStart(2,'0');
           return `${y}.${mo}.${d}`;
         }
-        // HH:MM 또는 HH시MM → HH:MM
+        // HH:MM / HH시MM / HH.MM / HH-h- MM → HH:MM
         function findTime(s){
           let m = s.match(/\b([01]?\d|2[0-3])\s*[:시]\s*([0-5]\d)\b/);
-          if(!m) return '';
-          return String(m[1]).padStart(2,'0') + ':' + m[2];
+          if (!m) m = s.match(/\b([01]?\d|2[0-3])\s*[.\-hH]\s*([0-5]\d)\b/);
+          if (!m) return '';
+          const hh = String(m[1]).padStart(2,'0');
+          const mm = m[2];
+          return `${hh}:${mm}`;
         }
         function findNo(s){
           const m = s.match(/N[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,512})/i);
