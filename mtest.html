@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>투표검수 OCR(모바일)</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    #chatbox { height: 46vh; overflow-y: auto; }
+    .btn { cursor: pointer; }
+    .mono { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
+    .editable-code { outline:none; border-bottom:1px dashed #cbd5e1; }
+    .editable-code:focus { background:#fff7ed; border-bottom-color:#fb923c; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
+  <h1 class="text-xl sm:text-2xl font-bold mb-3">📱 투표검수 OCR (모바일)</h1>
+
+  <!-- 채팅 -->
+  <div id="chatbox" class="w-full max-w-md bg-white p-3 rounded shadow space-y-3 mb-3"></div>
+
+  <!-- 모바일 입력 영역: 부여번호 + 사진 업로드 -->
+  <div class="w-full max-w-md space-y-2">
+    <div class="flex gap-2">
+      <input id="assignInput" type="text" inputmode="text" autocomplete="off"
+             placeholder="부여번호 (예: AA0001)"
+             class="flex-1 px-3 py-2 border rounded text-base"/>
+      <button id="assignBtn" type="button"
+              class="btn px-4 py-2 rounded bg-indigo-600 text-white text-base">설정</button>
+    </div>
+
+    <div class="flex gap-2">
+      <!-- 갤러리 전용: capture 제거 -->
+      <input id="imagePicker" type="file" accept="image/*" multiple class="hidden"/>
+      <button id="pickBtn" type="button"
+              class="btn flex-1 px-4 py-2 rounded bg-green-600 text-white text-base">사진 선택 (여러 장)</button>
+    </div>
+
+    <div class="text-xs text-gray-600" id="status">대기 중</div>
+  </div>
+
+  <!-- 결과 테이블 -->
+  <div id="resultPanel" class="w-full max-w-md mt-3">
+    <div class="flex items-center justify-between mb-1">
+      <div class="text-sm text-gray-700">부여번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
+      <button id="copyAllBtn" class="text-xs px-3 py-1 rounded border btn">전체 복사</button>
+    </div>
+    <div class="bg-white rounded shadow overflow-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-3 py-2 text-left">부여번호</th>
+            <th class="px-3 py-2 text-left">날짜</th>
+            <th class="px-3 py-2 text-left">고유번호</th>
+          </tr>
+        </thead>
+        <tbody id="resultTbody">
+          <tr><td class="px-3 py-2 text-gray-400" colspan="3">데이터 없음</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      // --- DOM refs
+      const chatbox = document.getElementById('chatbox');
+      const assignInput = document.getElementById('assignInput');
+      const assignBtn = document.getElementById('assignBtn');
+      const imagePicker = document.getElementById('imagePicker');
+      const pickBtn = document.getElementById('pickBtn');
+      const statusEl = document.getElementById('status');
+      const assignLabel = document.getElementById('assignLabel');
+      const copyAllBtn = document.getElementById('copyAllBtn');
+      const resultTbody = document.getElementById('resultTbody');
+
+      // --- state
+      let currentAssign = null;            // 'AA0001'
+      const rows = [];                     // { assign, date, code }
+      let queue = [];                      // files queue
+      let processing = false;              // queue lock
+      let worker = null;                   // tesseract worker (재사용)
+
+      // --- utils
+      function setStatus(txt){ statusEl.textContent = txt; }
+
+      async function copyToClipboard(text){
+        try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } } catch(_){}
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        let ok=false; try{ ok=document.execCommand('copy'); }catch(_){}
+        document.body.removeChild(ta); return ok;
+      }
+
+      function appendMessage(sender, html, {plainText=false, copyText=null}={}){
+        const msg = document.createElement('div');
+        msg.className = sender==='user' ? 'text-left' : 'text-right';
+
+        const wrap = document.createElement('div');
+        wrap.className = `inline-block p-2 rounded shadow ${sender==='user'?'bg-blue-100 text-blue-900':'bg-gray-200 text-gray-800'}`;
+
+        const header = document.createElement('div');
+        header.className='flex items-center gap-2 mb-1';
+        const label=document.createElement('strong');
+        label.textContent = sender==='user'?'👤 유저:':'🤖 시스템:';
+        header.appendChild(label);
+
+        if (sender==='bot' && copyText){
+          const b=document.createElement('button');
+          b.className='ml-2 text-xs px-2 py-1 rounded border btn';
+          b.textContent='복사';
+          b.onclick=async()=>{ const ok=await copyToClipboard(copyText); b.textContent=ok?'복사됨':'복사실패'; setTimeout(()=>b.textContent='복사',1500); };
+          header.appendChild(b);
+        }
+        wrap.appendChild(header);
+
+        if (plainText){ const pre=document.createElement('pre'); pre.textContent=html; wrap.appendChild(pre); }
+        else { const div=document.createElement('div'); div.innerHTML=html; wrap.appendChild(div); }
+
+        msg.appendChild(wrap); chatbox.appendChild(msg); chatbox.scrollTop=chatbox.scrollHeight;
+      }
+
+      function parseAssign(text){
+        const s=(text||'').trim();
+        return /^[A-Za-z]{2}\d{4}$/.test(s) ? s.toUpperCase() : null; // 전체 일치 + 대문자화
+      }
+
+      function setAssign(assign){
+        currentAssign = assign;
+        assignLabel.textContent = assign || '미설정';
+        rows.length = 0; renderTable();
+      }
+
+      function addRow(date, code){ rows.push({assign: currentAssign, date, code}); renderTable(); }
+
+      function renderTable(){
+        if (!rows.length){ resultTbody.innerHTML = '<tr><td class="px-3 py-2 text-gray-400" colspan="3">데이터 없음</td></tr>'; return; }
+        resultTbody.innerHTML = rows.map((r,i)=>`
+          <tr class="border-t">
+            <td class="px-3 py-2 mono">${r.assign}</td>
+            <td class="px-3 py-2 mono">${r.date}</td>
+            <td class="px-3 py-2 mono editable-code" contenteditable="true" data-index="${i}" spellcheck="false">${r.code}</td>
+          </tr>
+        `).join('');
+      }
+
+      // 인라인 편집 저장
+      resultTbody.addEventListener('keydown', (e)=>{
+        const el = e.target.closest('.editable-code'); if(!el) return;
+        if(e.key==='Enter'){ e.preventDefault(); el.blur(); }
+      });
+      resultTbody.addEventListener('blur', (e)=>{
+        const el = e.target.closest('.editable-code'); if(!el) return;
+        const i = parseInt(el.dataset.index,10);
+        const v = (el.innerText||'').trim();
+        if (!Number.isNaN(i) && rows[i] && v) rows[i].code = v; else if(rows[i]) el.innerText = rows[i].code;
+      }, true);
+
+      copyAllBtn.onclick = async ()=>{
+        const tsv = rows.map(r=>`${r.assign}\t${r.date}\t${r.code}`).join('\n');
+        const ok = await copyToClipboard(tsv);
+        const old = copyAllBtn.textContent; copyAllBtn.textContent = ok?'복사됨':'복사실패';
+        setTimeout(()=>copyAllBtn.textContent=old,1500);
+      };
+
+      // ===== 전처리/추출(lookbehind 미사용) =====
+      function toHalfwidth(str){
+        return str.replace(/[\uFF01-\uFF5E]/g, ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0))
+                  .replace(/\u3000/g,' ');
+      }
+      function normalizePunct(str){
+        return str.replace(/[:：]/g,':').replace(/[．·。]/g,'.').replace(/[／]/g,'/')
+                  .replace(/[－–—]/g,'-').replace(/[,，]/g,',');
+      }
+      function fixDigitLookalikes(str){
+        let prev;
+        do {
+          prev = str;
+          str = str.replace(/(\d)[Oo](\d)/g,'$10$2')
+                   .replace(/(\d)[lI](\d)/g,'$11$2')
+                   .replace(/(\d)[Ss](\d)/g,'$15$2');
+        } while (str!==prev);
+        return str;
+      }
+      function extractFields(raw){
+        let text = fixDigitLookalikes(normalizePunct(toHalfwidth(raw)));
+        const lines = text.split(/\n+/).map(l=>l.trim()).filter(Boolean);
+        const whole = lines.join(' ');
+
+        let voteDate = '', voteNo = '';
+
+        function findDate(s){
+          let m = s.match(/\b(20\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
+          if(!m) m = s.match(/\b(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\b/);
+          if(!m){
+            const m2 = s.match(/\b(\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
+            if(m2){ const y4=2000+Number(m2[1]); return `${y4}.${String(m2[2]).padStart(2,'0')}.${String(m2[3]).padStart(2,'0')}`; }
+            return '';
+          }
+          const y=m[1], mo=String(m[2]).padStart(2,'0'), d=String(m[3]).padStart(2,'0');
+          return `${y}.${mo}.${d}`;
+        }
+        function findNo(s){
+          const m = s.match(/N[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,512})/i);
+          if(!m) return '';
+          let core = m[1].replace(/\s+/g,'').replace(/[–—]/g,'-').replace(/[^A-Za-z0-9_-]+/g,'');
+          return `No.M-${core}`; // 원문 기준
+        }
+
+        voteDate = findDate(whole);
+        voteNo   = findNo(whole);
+        if(!voteDate || !voteNo){
+          for(const line of lines){ if(!voteDate) voteDate=findDate(line); if(!voteNo) voteNo=findNo(line); }
+        }
+        return { voteDate, voteNo };
+      }
+
+      // ==== 인식률 향상 유틸 ====
+      async function makeBinarizedCanvasFromFile(file, rect) {
+        const bmp = await createImageBitmap(file);
+        const sx = rect.left, sy = rect.top, sw = rect.width, sh = rect.height;
+        const scale = 2; // 2~3 권장
+        const cw = Math.max(8, Math.floor(sw * scale));
+        const ch = Math.max(8, Math.floor(sh * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = cw; canvas.height = ch;
+        const ctx = canvas.getContext('2d');
+
+        ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, cw, ch);
+
+        // 그레이스케일 + 간단 대비 강화
+        let img = ctx.getImageData(0, 0, cw, ch);
+        let d = img.data;
+        for (let i = 0; i < d.length; i += 4) {
+          const y = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+          let v = (y - 120) * 1.6 + 128; // 스트레치
+          if (v < 0) v = 0; if (v > 255) v = 255;
+          d[i] = d[i+1] = d[i+2] = v;
+        }
+        ctx.putImageData(img, 0, 0);
+
+        // 임계값 이진화
+        img = ctx.getImageData(0, 0, cw, ch);
+        d = img.data;
+        const T = 160; // 상황 따라 150~180
+        for (let i = 0; i < d.length; i += 4) {
+          const b = (d[i] > T) ? 255 : 0;
+          d[i] = d[i+1] = d[i+2] = b;
+        }
+        ctx.putImageData(img, 0, 0);
+        return canvas;
+      }
+
+      function pickBestCode(cands) {
+        if (!cands || !cands.length) return '';
+        function score(s) {
+          const len = s.length;
+          const ok = (s.match(/[A-Za-z0-9_-]/g) || []).length;
+          return len * 3 + ok; // 길이에 가중치
+        }
+        cands = Array.from(new Set(cands));
+        cands.sort((a,b)=>score(b)-score(a));
+        return cands[0];
+      }
+
+      // ==== Tesseract ====
+      async function getWorker(){
+        if (worker) return worker;
+        worker = await Tesseract.createWorker();
+        await worker.load();
+        await worker.loadLanguage('eng'); // 선택옵션 제외(eng+kor 아님)
+        await worker.initialize('eng');
+        await worker.setParameters({
+          tessedit_pageseg_mode: 6,
+          user_defined_dpi: '300',
+          preserve_interword_spaces: '1',
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        return worker;
+      }
+
+      async function ocrFile(file){
+        const w = await getWorker();
+        const { data:{ text } } = await w.recognize(file);
+        let f = extractFields(text);
+
+        // ROI(하단 35%) 2배 확대 + 이진화 → PSM=7 재인식 → 후보 중 최적 선택
+        if(!f.voteNo || !f.voteDate){
+          const url = URL.createObjectURL(file);
+          const img = new Image(); img.src = url; try{ await img.decode(); }catch(_){}
+          if (img.naturalWidth && img.naturalHeight){
+            const rectBottom = {
+              left: 0,
+              top: Math.floor(img.naturalHeight * 0.65),
+              width: img.naturalWidth,
+              height: Math.floor(img.naturalHeight * 0.35)
+            };
+            // 전처리된 ROI로 한 줄 인식
+            const roiCanvas = await makeBinarizedCanvasFromFile(file, rectBottom);
+            await w.setParameters({ tessedit_pageseg_mode: 7 }); // single line
+            const { data:{ text: tRoi } } = await w.recognize(roiCanvas);
+
+            // 후보 모아 최적 선택
+            const allTexts = [f.voteNo, tRoi].filter(Boolean).join('\n');
+            const candRe = /N[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,512})/ig;
+            let m, cands = [];
+            while ((m = candRe.exec(allTexts)) !== null) {
+              let core = m[1].replace(/\s+/g,'').replace(/[–—]/g,'-').replace(/[^A-Za-z0-9_-]+/g,'');
+              cands.push('No.M-' + core);
+            }
+            const best = pickBestCode(cands);
+            if (best) f.voteNo = best;
+
+            // 날짜가 없으면 상단 35%도 스캔
+            if (!f.voteDate) {
+              await w.setParameters({ tessedit_pageseg_mode: 6 });
+              const rectTop = { left:0, top:0, width: img.naturalWidth, height: Math.floor(img.naturalHeight*0.35) };
+              const topCanvas = await makeBinarizedCanvasFromFile(file, rectTop);
+              const { data:{ text: tTop } } = await w.recognize(topCanvas);
+              const ft = extractFields(tTop);
+              if (ft.voteDate) f.voteDate = ft.voteDate;
+            }
+            // 기본 모드 복원
+            await w.setParameters({ tessedit_pageseg_mode: 6 });
+          }
+        }
+        return f;
+      }
+
+      // --- queue processor
+      async function drainQueue(){
+        if (processing) return;
+        processing = true;
+        setStatus(`처리 중 (${queue.length}장 대기)`);
+        while(queue.length){
+          const file = queue.shift();
+          setStatus(`처리 중… (남은 ${queue.length}장)`);
+          const url = URL.createObjectURL(file);
+          appendMessage('user', `<img src="${url}" class="max-w-[240px] rounded border shadow">`);
+          if (!currentAssign){ appendMessage('bot','먼저 부여번호를 설정하세요. 예) <b>AA0001</b>'); continue; }
+
+          const { voteDate, voteNo } = await ocrFile(file);
+          const codeOnly = (voteNo||'').replace(/^No\.?\s*/i,''); // No. 제거
+          const line = `${voteDate || '❌'}\t${codeOnly || '❌'}`;
+          appendMessage('bot', line, { plainText:true, copyText: line });
+          if (voteDate && codeOnly) addRow(voteDate, codeOnly);
+        }
+        setStatus('대기 중');
+        processing = false;
+      }
+
+      // --- events
+      assignBtn.onclick = ()=>{
+        const s = assignInput.value.trim();
+        appendMessage('user', s);
+        const assign = parseAssign(s);
+        if (assign){ setAssign(assign); appendMessage('bot', `부여번호 ${assign} 입니다.`); }
+        else { appendMessage('bot','잘못된 접근입니다.'); }
+        assignInput.value='';
+      };
+
+      pickBtn.onclick = ()=> imagePicker.click();
+      imagePicker.onchange = (e)=>{
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        queue.push(...files);
+        e.target.value = ''; // 같은 파일 다시 선택 가능
+        drainQueue();
+      };
+
+      // 데스크톱 겸용: 이미지 붙여넣기 지원
+      window.addEventListener('paste', (e)=>{
+        const items = e.clipboardData?.items || [];
+        const imgs = [];
+        for (const it of items) if (it.kind==='file' && it.type.startsWith('image/')) imgs.push(it.getAsFile());
+        if (imgs.length){ queue.push(...imgs); drainQueue(); }
+      });
+
+      // 페이지 떠날 때 워커 정리
+      window.addEventListener('beforeunload', async ()=>{
+        try { if (worker){ await worker.terminate(); worker=null; } } catch(_){}
+      });
+
+      // init
+      renderTable();
+    })();
+  </script>
+</body>
+</html>
