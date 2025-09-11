@@ -31,7 +31,7 @@
     </div>
 
     <div class="flex gap-2">
-     <input id="imagePicker" type="file" accept="image/*" multiple class="hidden"/>
+      <input id="imagePicker" type="file" accept="image/*" multiple class="hidden"/>
       <button id="pickBtn" type="button"
               class="btn flex-1 px-4 py-2 rounded bg-green-600 text-white text-base">사진 선택 (여러 장)</button>
     </div>
@@ -175,22 +175,24 @@
         return str.replace(/[:：]/g,':').replace(/[．·。]/g,'.').replace(/[／]/g,'/')
                   .replace(/[－–—]/g,'-').replace(/[,，]/g,',');
       }
+      // 00:02 류 보정 + 구분자 주변 O→0 보정
       function fixDigitLookalikes(str){
-        // 숫자-문자-숫자 패턴 + 구분자 주변 'O' 보정(00:02, 0O:O2 등)
         let prev;
         do {
           prev = str;
           str = str
-            .replace(/(\d)[Oo](\d)/g,'$10$2')           // 1O2 -> 102
-            .replace(/(\d)[lI](\d)/g,'$11$2')           // 1l2/1I2 -> 112
-            .replace(/(\d)[Ss](\d)/g,'$15$2')           // 1S2 -> 152
-            .replace(/([:.\-시hH])[Oo](\d)/g,'$10$2')   // :O2 / .O2 / 시O2 -> :02 등
-            .replace(/(\d)[Oo]([:.\-시hH])/g,'$10$2')   // 0O: / 0O시 -> 00:
-            .replace(/\b[Oo](\d)/g,'0$1')               // O2 -> 02
-            .replace(/(\d)[Oo]\b/g,'$10');              // 20O -> 200
+            .replace(/(\d)[Oo](\d)/g,'$10$2')
+            .replace(/(\d)[lI](\d)/g,'$11$2')
+            .replace(/(\d)[Ss](\d)/g,'$15$2')
+            .replace(/([:.\-시hH])[Oo](\d)/g,'$10$2')
+            .replace(/(\d)[Oo]([:.\-시hH])/g,'$10$2')
+            .replace(/\b[Oo](\d)/g,'0$1')
+            .replace(/(\d)[Oo]\b/g,'$10');
         } while (str!==prev);
         return str;
       }
+
+      // 날짜-시간을 "붙은 쌍"으로 우선 추출
       function extractFields(raw){
         let text = fixDigitLookalikes(normalizePunct(toHalfwidth(raw)));
         const lines = text.split(/\n+/).map(l=>l.trim()).filter(Boolean);
@@ -198,43 +200,63 @@
 
         let voteDate = '', voteTime = '', voteNo = '';
 
-        function findDate(s){
-          let m = s.match(/\b(20\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
-          if(!m) m = s.match(/\b(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\b/);
-          if(!m){
-            const m2 = s.match(/\b(\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
-            if(m2){ const y4=2000+Number(m2[1]); return `${y4}.${String(m2[2]).padStart(2,'0')}.${String(m2[3]).padStart(2,'0')}`; }
-            return '';
-          }
-          const y=m[1], mo=String(m[2]).padStart(2,'0'), d=String(m[3]).padStart(2,'0');
-          return `${y}.${mo}.${d}`;
+        // YYYY.MM.DD HH:MM (KST) 우선
+        function findDateTime(s){
+          const re = /\b(20\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\s+([01]?\d|2[0-3])\s*[:.시hH]\s*([0-5]\d)\s*(?:\(?\s*K[5S]T\s*\)?)?/i;
+          const m = s.match(re);
+          if (!m) return null;
+          const y = m[1], mo = String(m[2]).padStart(2,'0'), d = String(m[3]).padStart(2,'0');
+          const hh = String(m[4]).padStart(2,'0'), mm = m[5];
+          return { date: `${y}.${mo}.${d}`, time: `${hh}:${mm}` };
         }
-        // HH:MM / HH시MM / HH.MM / HH-h- MM → HH:MM
-        function findTime(s){
+        function findDateOnly(s){
+          let m = s.match(/\b(20\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
+          if (!m) m = s.match(/\b(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\b/);
+          return m ? `${m[1]}.${String(m[2]).padStart(2,'0')}.${String(m[3]).padStart(2,'0')}` : '';
+        }
+        function findTimeOnly(s){
           let m = s.match(/\b([01]?\d|2[0-3])\s*[:시]\s*([0-5]\d)\b/);
           if (!m) m = s.match(/\b([01]?\d|2[0-3])\s*[.\-hH]\s*([0-5]\d)\b/);
-          if (!m) return '';
-          const hh = String(m[1]).padStart(2,'0');
-          const mm = m[2];
-          return `${hh}:${mm}`;
+          return m ? `${String(m[1]).padStart(2,'0')}:${m[2]}` : '';
         }
         function findNo(s){
           const m = s.match(/N[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,512})/i);
           if(!m) return '';
           let core = m[1].replace(/\s+/g,'').replace(/[–—]/g,'-').replace(/[^A-Za-z0-9_-]+/g,'');
-          return `No.M-${core}`; // 원문 기준
+          return `No.M-${core}`;
         }
 
-        voteDate = findDate(whole);
-        voteTime = findTime(whole);
-        voteNo   = findNo(whole);
-        if(!voteDate || !voteTime || !voteNo){
-          for(const line of lines){
-            if(!voteDate) voteDate = findDate(line);
-            if(!voteTime) voteTime = findTime(line);
-            if(!voteNo)   voteNo   = findNo(line);
+        // 1) 전체에서 날짜-시간 한꺼번에
+        const dtWhole = findDateTime(whole);
+        if (dtWhole){ voteDate = dtWhole.date; voteTime = dtWhole.time; }
+
+        // 2) 못 찾았으면 라인/인접라인 결합
+        if (!voteDate || !voteTime){
+          for (let i=0;i<lines.length;i++){
+            const dti = findDateTime(lines[i]);
+            if (dti){ voteDate = voteDate || dti.date; voteTime = voteTime || dti.time; break; }
+
+            if (!voteDate || !voteTime){
+              const d = findDateOnly(lines[i]);
+              if (d){
+                const tHere = findTimeOnly(lines[i]);
+                const tNext = (i+1<lines.length) ? findTimeOnly(lines[i+1]) : '';
+                if (tHere || tNext){
+                  voteDate = voteDate || d;
+                  voteTime = voteTime || (tHere || tNext);
+                  break;
+                }
+              }
+            }
           }
         }
+
+        // 3) 시리얼넘버
+        voteNo = findNo(whole);
+        if (!voteNo){
+          for (const line of lines){ voteNo = findNo(line); if (voteNo) break; }
+        }
+
         return { voteDate, voteTime, voteNo };
       }
 
