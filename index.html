@@ -11,6 +11,10 @@
       height: 60vh;
       overflow-y: auto;
     }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
@@ -28,12 +32,13 @@
     const chatInput = document.getElementById('chatInput');
     const sendBtn = document.getElementById('sendBtn');
 
-    function appendMessage(sender, content) {
+    function appendMessage(sender, content, isCode = false) {
       const msg = document.createElement('div');
       msg.className = sender === 'user' ? 'text-left' : 'text-right';
       msg.innerHTML = `
         <div class="inline-block p-2 rounded shadow ${sender === 'user' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800'}">
-          <strong>${sender === 'user' ? '👤 유저' : '🤖 시스템'}:</strong><br>${content}
+          <strong>${sender === 'user' ? '👤 유저' : '🤖 시스템'}:</strong><br>
+          ${isCode ? `<pre><code>${content}</code></pre>` : content}
         </div>
       `;
       chatbox.appendChild(msg);
@@ -73,20 +78,20 @@
           const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
           let voteDate = '', voteTime = '', voteNo = '';
 
-   for (let line of lines) {
-  if (!voteDate && /\d{4}[./-]\d{1,2}[./-]\d{1,2}/.test(line)) {
-    voteDate = line.match(/\d{4}[./-]\d{1,2}[./-]\d{1,2}/)[0].replace(/[./]/g, '.');
-  }
-  if (!voteTime && /\d{1,2}:\d{2}/.test(line)) {
-    voteTime = line.match(/\d{1,2}:\d{2}/)[0];
-  }
-  if (!voteNo && /No\.?\s?M-[A-Za-z0-9]{6,}/i.test(line)) {
-    voteNo = line.match(/No\.?\s?M-[A-Za-z0-9]{6,}/i)[0].replace(/\s+/g, '');
-  }
-}
+          for (let line of lines) {
+            if (!voteDate && /\d{4}[./-]\d{1,2}[./-]\d{1,2}/.test(line)) {
+              voteDate = line.match(/\d{4}[./-]\d{1,2}[./-]\d{1,2}/)[0].replace(/[./]/g, '.');
+            }
+            if (!voteTime && /\d{1,2}:\d{2}/.test(line)) {
+              voteTime = line.match(/\d{1,2}:\d{2}/)[0];
+            }
+            if (!voteNo && /No\.?\s?M-[A-Za-z0-9]{6,}/i.test(line)) {
+              voteNo = line.match(/No\.?\s?M-[A-Za-z0-9]{6,}/i)[0].replace(/\s+/g, '');
+            }
+          }
 
           const result = `${voteDate || '❌'}\t${voteTime || '❌'}\t${voteNo || '❌'}`;
-          appendMessage('bot', `<code>${result}</code>`);
+          appendMessage('bot', result, true);
         }
       }
     });
