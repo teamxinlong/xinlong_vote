@@ -13,7 +13,7 @@
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-  <h1 class="text-2xl font-bold mb-4">💬 투표검수 OCR 챗봇</h1>
+  <h1 class="text-2xl font-bold mb-4">💬 투표검수 OCR 챗봇수정</h1>
 
   <div id="chatbox" class="w-full max-w-xl bg-white p-4 rounded shadow space-y-4 mb-4"></div>
 
@@ -117,46 +117,9 @@
         .replace(/(?<=\d)[Ss](?=\d)/g, '5');
     }
 
-    // ---- 이미지 전처리: 스케일업 + 그레이스케일 + 간단 이진화 ----
-    async function preprocessImage(srcOrFile, scale = 2.5) {
-      return new Promise(async (resolve) => {
-        const img = new Image();
-        const url = typeof srcOrFile === 'string' ? srcOrFile : URL.createObjectURL(srcOrFile);
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          const w = Math.max(1, Math.floor(img.naturalWidth * scale));
-          const h = Math.max(1, Math.floor(img.naturalHeight * scale));
-          const cv = document.createElement('canvas');
-          cv.width = w; cv.height = h;
-          const ctx = cv.getContext('2d');
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(img, 0, 0, w, h);
-
-          // grayscale + threshold
-          const imageData = ctx.getImageData(0, 0, w, h);
-          const data = imageData.data;
-          // Otsu 대체 간단 임계값
-          let sum = 0; for (let i=0;i<data.length;i+=4){ const y = 0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; sum += y; }
-          const mean = sum / (data.length/4);
-          const th = Math.max(120, Math.min(200, mean)); // 120~200 사이
-          for (let i=0;i<data.length;i+=4){
-            const y = 0.299*data[i]+0.587*data[i+1]+0.114*data[i+2];
-            const v = y > th ? 255 : 0;
-            data[i]=data[i+1]=data[i+2]=v; data[i+3]=255;
-          }
-          ctx.putImageData(imageData, 0, 0);
-          resolve(cv.toDataURL('image/png'));
-        };
-        img.onerror = () => resolve(url);
-        img.src = url;
-      });
-    }
-
-    // ---- 필드 추출 ----
+    // ---- 필드 추출 (시간 제거) ----
     function extractFields(raw) {
       let text = fixDigitLookalikes(normalizePunct(toHalfwidth(raw)));
-      // 대시 변형 통일
-      text = text.replace(/[–—]/g, '-').replace(/_/g, '_');
       const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
       const whole = lines.join(' ');
 
@@ -178,21 +141,21 @@
         return `${y}.${mo}.${d}`;
       }
 
-      // 고유번호: No. M- + 영숫자/언더바/하이픈 (오탈자 흡수: N0, M_, M— 등)
-     function findNo(s){
-  // N[o0] 허용, M- / M_ / M— / M– 허용
-  // 본문은 영숫자/언더바/하이픈 + (중간 공백/줄바꿈도 허용) 길이 가변
-  const m = s.match(/\bN[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,256})/i);
-  if (!m) return '';
-  // OCR이 중간에 끼운 공백/줄바꿈 제거 + 대시 통일 + 끝쪽 잡문자만 정리
-  let core = m[1].replace(/\s+/g, '');    // 내부 공백/개행 전부 제거
-  core = core.replace(/[–—]/g, '-');      // 하이픈 변종 통일
-  core = core.replace(/[^A-Za-z0-9_-]+$/,''); // 끝에 붙은 쓰레기만 제거(앞은 건드리지 않음)
-  return `No.M-${core}`;
-}
+      // ✅ 고유번호: N[o|0].? M(-/_/en dash/em dash) + (영숫자/언더바/하이픈/공백/개행) 길이 가변
+      function findNo(s){
+        const m = s.match(/N[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,512})/i);
+        if (!m) return '';
+        // 내부 공백/개행 제거, 하이픈 변종 통일, 허용 외 문자는 모두 제거해서 이어붙임(중간에서 끊김 방지)
+        let core = m[1]
+          .replace(/\s+/g, '')
+          .replace(/[–—]/g, '-')
+          .replace(/[^A-Za-z0-9_-]+/g, '');
+        return `No.M-${core}`;
+      }
 
       voteDate = findDate(whole);
       voteNo   = findNo(whole);
+
       if (!voteDate || !voteNo){
         for (const line of lines){
           if (!voteDate) voteDate = findDate(line);
@@ -205,29 +168,25 @@
     async function ocrWithTesseract(srcOrFile) {
       const worker = await Tesseract.createWorker();
       await worker.load();
-      // ✅ 언어: eng만 사용 (가볍고 실패 적음)
-      await worker.loadLanguage('eng');
+      await worker.loadLanguage('eng');   // 안정성 위해 eng 단일
       await worker.initialize('eng');
-
       await worker.setParameters({
-        tessedit_pageseg_mode: 6,             // 단일 블록
+        tessedit_pageseg_mode: 6,
         user_defined_dpi: '300',
         preserve_interword_spaces: '1',
-        // ✅ 화이트리스트: 필요한 문자만
+        // 필요문자 위주 화이트리스트 (언더바/하이픈 포함)
         tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
       });
 
-      // 1차: 전처리 이미지로 전체 인식
-      const pre = await preprocessImage(srcOrFile, 2.5);
-      let { data: { text } } = await worker.recognize(pre);
+      let { data: { text } } = await worker.recognize(srcOrFile);
       let f = extractFields(text);
 
-      // 2차: 실패 시 하단 단일라인 재시도
+      // 하단 재시도(단일 라인) — 고유번호 보강
       if (!f.voteNo || !f.voteDate) {
         let url = typeof srcOrFile === 'string' ? srcOrFile : URL.createObjectURL(srcOrFile);
         const img = new Image(); img.src = url; try { await img.decode(); } catch {}
         if (img.naturalWidth && img.naturalHeight) {
-          const rectBottom = { left: 0, top: Math.floor(img.naturalHeight*0.65), width: img.naturalWidth, height: Math.floor(img.naturalHeight*0.35)};
+          const rectBottom = { left: 0, top: Math.floor(img.naturalHeight*0.65), width: img.naturalWidth, height: Math.floor(img.naturalHeight*0.35) };
           await worker.setParameters({ tessedit_pageseg_mode: 7 });
           const { data: { text: tBottom } } = await worker.recognize(url, { rectangle: rectBottom });
           const fb = extractFields(tBottom);
