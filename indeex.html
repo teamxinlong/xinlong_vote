@@ -16,7 +16,7 @@
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-  <h1 class="text-2xl font-bold mb-4">💬 투표검수 OCR 챗2봇</h1>
+  <h1 class="text-2xl font-bold mb-4">💬 투표검수 OCR 챗봇</h1>
 
   <!-- 채팅 -->
   <div id="chatbox" class="w-full max-w-xl bg-white p-4 rounded shadow space-y-4 mb-4"></div>
@@ -32,4 +32,334 @@
   <!-- 결과 테이블 -->
   <div id="resultPanel" class="w-full max-w-xl mt-4">
     <div class="flex items-center justify-between mb-2">
-      <div class="text-sm text-gra
+      <div class="text-sm text-gray-700">부여번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
+      <button id="copyAllBtn" class="text-xs px-3 py-1 rounded border btn">전체 복사</button>
+    </div>
+    <div class="bg-white rounded shadow overflow-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-3 py-2 text-left">부여번호</th>
+            <th class="px-3 py-2 text-left">날짜</th>
+            <th class="px-3 py-2 text-left">고유번호</th>
+          </tr>
+        </thead>
+        <tbody id="resultTbody">
+          <tr><td class="px-3 py-2 text-gray-400" colspan="3">데이터 없음</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // ===== 즉시 실행(브라우저 호환 안전판) =====
+    (function(){
+      // 에러를 채팅창에 표시(디버깅용)
+      window.addEventListener('error', function(e){
+        const box = document.getElementById('chatbox');
+        if (!box) return;
+        const div = document.createElement('div');
+        div.className = 'text-right';
+        div.innerHTML = '<div class="inline-block p-2 rounded shadow bg-red-100 text-red-800"><strong>🤖 시스템:</strong><br><pre style="white-space:pre-wrap">'+ String(e.error || e.message) +'</pre></div>';
+        box.appendChild(div);
+      });
+
+      const chatbox = document.getElementById('chatbox');
+      const chatForm = document.getElementById('chatForm');
+      const chatInput = document.getElementById('chatInput');
+      const assignLabel = document.getElementById('assignLabel');
+      const copyAllBtn = document.getElementById('copyAllBtn');
+      const resultTbody = document.getElementById('resultTbody');
+
+      // ===== 상태 =====
+      let currentAssign = null;         // 'AA0001'
+      const rows = [];                  // { assign, date, code }
+
+      // ===== 유틸 =====
+      async function copyToClipboard(text) {
+        try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch(_) {}
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        let ok = false; try { ok = document.execCommand('copy'); } catch(_) {}
+        document.body.removeChild(ta); return ok;
+      }
+
+      function appendMessage(sender, content, opts) {
+        opts = opts || {};
+        const plainText = !!opts.plainText;
+        const copyText = opts.copyText || null;
+
+        const msg = document.createElement('div');
+        msg.className = sender === 'user' ? 'text-left' : 'text-right';
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'inline-block p-2 rounded shadow ' + (sender === 'user' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800');
+
+        const header = document.createElement('div');
+        header.className = 'flex items-center gap-2 mb-1';
+        const label = document.createElement('strong');
+        label.innerText = sender === 'user' ? '👤 유저:' : '🤖 시스템:';
+        header.appendChild(label);
+
+        if (sender === 'bot' && copyText) {
+          const copyBtn = document.createElement('button');
+          copyBtn.className = 'ml-2 text-xs px-2 py-1 rounded border btn';
+          copyBtn.innerText = '복사';
+          copyBtn.addEventListener('click', async function(){
+            const ok = await copyToClipboard(copyText);
+            copyBtn.innerText = ok ? '복사됨' : '복사실패';
+            setTimeout(function(){ copyBtn.innerText = '복사'; }, 1500);
+          });
+          header.appendChild(copyBtn);
+        }
+
+        wrapper.appendChild(header);
+
+        if (plainText) {
+          const pre = document.createElement('pre');
+          pre.textContent = content; // 탭 보존
+          wrapper.appendChild(pre);
+        } else {
+          const div = document.createElement('div');
+          div.innerHTML = content;
+          wrapper.appendChild(div);
+        }
+
+        msg.appendChild(wrapper);
+        chatbox.appendChild(msg);
+        chatbox.scrollTop = chatbox.scrollHeight;
+      }
+
+      // ===== 부여번호/테이블 =====
+      function parseAssign(text){
+        var s = (text || '').trim();
+        return /^[A-Za-z]{2}\d{4}$/.test(s) ? s.toUpperCase() : null; // 전체 일치 + 자동 대문자화
+      }
+
+      function setAssign(assign){
+        currentAssign = assign;
+        assignLabel.textContent = assign || '미설정';
+        rows.length = 0; // 테이블 리셋
+        renderTable();
+      }
+
+      function addRow(date, code){
+        rows.push({ assign: currentAssign, date: date, code: code });
+        renderTable();
+      }
+
+      function renderTable(){
+        if (!rows.length){
+          resultTbody.innerHTML = '<tr><td class="px-3 py-2 text-gray-400" colspan="3">데이터 없음</td></tr>';
+          return;
+        }
+        var html = '';
+        for (var i=0;i<rows.length;i++){
+          var r = rows[i];
+          html += '<tr class="border-t">' +
+                    '<td class="px-3 py-2 mono">' + r.assign + '</td>' +
+                    '<td class="px-3 py-2 mono">' + r.date + '</td>' +
+                    '<td class="px-3 py-2 mono editable-code" contenteditable="true" data-index="'+ i +'" spellcheck="false">' + r.code + '</td>' +
+                  '</tr>';
+        }
+        resultTbody.innerHTML = html;
+      }
+
+      // 인라인 편집(고유번호 셀)
+      resultTbody.addEventListener('keydown', function(e){
+        var el = e.target.closest ? e.target.closest('.editable-code') : null;
+        if (!el) return;
+        if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+      });
+      resultTbody.addEventListener('blur', function(e){
+        var el = e.target.closest ? e.target.closest('.editable-code') : null;
+        if (!el) return;
+        var idx = parseInt(el.getAttribute('data-index'), 10);
+        if (isNaN(idx) || !rows[idx]) return;
+        var val = (el.innerText || '').trim();
+        if (val) { rows[idx].code = val; } else { el.innerText = rows[idx].code; }
+      }, true);
+
+      copyAllBtn.addEventListener('click', async function(){
+        var parts = [];
+        for (var i=0;i<rows.length;i++){
+          var r = rows[i];
+          parts.push(r.assign + '\t' + r.date + '\t' + r.code);
+        }
+        var tsv = parts.join('\n');
+        var ok = await copyToClipboard(tsv);
+        var old = copyAllBtn.innerText;
+        copyAllBtn.innerText = ok ? '복사됨' : '복사실패';
+        setTimeout(function(){ copyAllBtn.innerText = old; }, 1500);
+      });
+
+      // ===== 텍스트 입력 처리 (엔터/버튼 모두) =====
+      function handleSend() {
+        var text = chatInput.value.trim();
+        if (!text) return;
+
+        appendMessage('user', text);
+        chatInput.value = '';
+
+        var assign = parseAssign(text);
+        if (assign) {
+          setAssign(assign); // 리셋 + 설정
+          appendMessage('bot', '부여번호 ' + assign + ' 입니다.');
+        } else {
+          appendMessage('bot', '잘못된 접근입니다.'); // 테이블 유지
+        }
+      }
+      chatForm.addEventListener('submit', function(e){ e.preventDefault(); handleSend(); });
+
+      // ===== OCR 전처리 (lookbehind 미사용) =====
+      function toHalfwidth(str) {
+        return str.replace(/[\uFF01-\uFF5E]/g, function(ch){ return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); })
+                  .replace(/\u3000/g, ' ');
+      }
+      function normalizePunct(str){
+        return str
+          .replace(/[:：]/g, ':')
+          .replace(/[．·。]/g, '.')
+          .replace(/[／]/g, '/')
+          .replace(/[－–—]/g, '-')
+          .replace(/[,，]/g, ',');
+      }
+      // 숫자-문자-숫자 패턴에서만 치환(lookbehind 대체)
+      function fixDigitLookalikes(str){
+        var prev;
+        do {
+          prev = str;
+          str = str
+            .replace(/(\d)[Oo](\d)/g, '$10$2')
+            .replace(/(\d)[lI](\d)/g, '$11$2')
+            .replace(/(\d)[Ss](\d)/g, '$15$2');
+        } while (str !== prev); // 안정화될 때까지 1~2회 돌 수 있음
+        return str;
+      }
+
+      function extractFields(raw) {
+        var text = fixDigitLookalikes(normalizePunct(toHalfwidth(raw)));
+        var lines = text.split(/\n+/).map(function(l){ return l.trim(); }).filter(function(s){ return !!s; });
+        var whole = lines.join(' ');
+
+        var voteDate = '', voteNo = '';
+
+        function findDate(s){
+          var m = s.match(/\b(20\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
+          if (!m) m = s.match(/\b(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\b/);
+          if (!m) {
+            var m2 = s.match(/\b(\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
+            if (m2){
+              var y4 = 2000 + Number(m2[1]);
+              return y4 + '.' + String(m2[2]).padStart(2,'0') + '.' + String(m2[3]).padStart(2,'0');
+            }
+            return '';
+          }
+          var y = m[1], mo = String(m[2]).padStart(2,'0'), d = String(m[3]).padStart(2,'0');
+          return y + '.' + mo + '.' + d;
+        }
+
+        function findNo(s){
+          var m = s.match(/N[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,512})/i);
+          if (!m) return '';
+          var core = m[1]
+            .replace(/\s+/g, '')
+            .replace(/[–—]/g, '-')
+            .replace(/[^A-Za-z0-9_-]+/g, '');
+          return 'No.M-' + core; // 원문 기준
+        }
+
+        voteDate = findDate(whole);
+        voteNo   = findNo(whole);
+        if (!voteDate || !voteNo){
+          for (var i=0;i<lines.length;i++){
+            var line = lines[i];
+            if (!voteDate) voteDate = findDate(line);
+            if (!voteNo)   voteNo   = findNo(line);
+          }
+        }
+        return { voteDate: voteDate, voteNo: voteNo };
+      }
+
+      async function ocrWithTesseract(srcOrFile) {
+        const worker = await Tesseract.createWorker();
+        await worker.load();
+        await worker.loadLanguage('eng');
+        await worker.initialize('eng');
+        await worker.setParameters({
+          tessedit_pageseg_mode: 6,
+          user_defined_dpi: '300',
+          preserve_interword_spaces: '1',
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+
+        let res = await worker.recognize(srcOrFile);
+        let f = extractFields(res.data.text || '');
+
+        if (!f.voteNo || !f.voteDate) {
+          let url = (typeof srcOrFile === 'string') ? srcOrFile : URL.createObjectURL(srcOrFile);
+          const img = new Image(); img.src = url; try { await img.decode(); } catch(_){}
+          if (img.naturalWidth && img.naturalHeight) {
+            const rectBottom = { left: 0, top: Math.floor(img.naturalHeight*0.65), width: img.naturalWidth, height: Math.floor(img.naturalHeight*0.35) };
+            await worker.setParameters({ tessedit_pageseg_mode: 7 });
+            let res2 = await worker.recognize(url, { rectangle: rectBottom });
+            const fb = extractFields(res2.data.text || '');
+            if (!f.voteNo)   f.voteNo = fb.voteNo;
+            if (!f.voteDate) f.voteDate = fb.voteDate;
+          }
+        }
+
+        await worker.terminate();
+        return f;
+      }
+
+      // ===== 이미지 붙여넣기 → OCR → 행 누적 =====
+      window.addEventListener('paste', async function(e){
+        var items = (e.clipboardData && e.clipboardData.items) ? e.clipboardData.items : [];
+        for (var i=0;i<items.length;i++) {
+          var item = items[i];
+          if (item.kind === 'file' && item.type.indexOf('image/') === 0) {
+            var file = item.getAsFile();
+            var url = URL.createObjectURL(file);
+
+            appendMessage('user', '<img src="'+ url +'" class="max-w-xs mt-1 rounded border shadow">');
+
+            if (!currentAssign){
+              appendMessage('bot', '먼저 부여번호를 입력하세요. 예) <b>AA0001</b>');
+              continue;
+            }
+
+            var r = await ocrWithTesseract(file);
+            var codeOnly = (r.voteNo || '').replace(/^No\.?\s*/i, ''); // No. 제거
+            var line = (r.voteDate || '❌') + '\t' + (codeOnly || '❌');
+            appendMessage('bot', line, { plainText: true, copyText: line });
+
+            if (r.voteDate && codeOnly) addRow(r.voteDate, codeOnly);
+          }
+        }
+      });
+
+      // ===== 텍스트 제출 핸들러 =====
+      chatForm.addEventListener('submit', function(e){ e.preventDefault(); handleSend(); });
+      function handleSend(){
+        var text = chatInput.value.trim();
+        if (!text) return;
+        appendMessage('user', text);
+        chatInput.value = '';
+
+        var assign = parseAssign(text);
+        if (assign) {
+          setAssign(assign);
+          appendMessage('bot', '부여번호 ' + assign + ' 입니다.');
+        } else {
+          appendMessage('bot', '잘못된 접근입니다.');
+        }
+      }
+
+      // 초기 테이블 렌더
+      renderTable();
+    })();
+  </script>
+</body>
+</html>
