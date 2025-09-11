@@ -48,67 +48,92 @@
     sendBtn.addEventListener('click', handleSend);
     chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSend(); });
 
-    // ====== 핵심: 동적 길이 고유번호 + 정확도 개선 OCR ======
-    function extractFields(text) {
-      const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-      let voteDate = '', voteTime = '', voteNo = '';
-
-      for (let line of lines) {
-        // 날짜: YYYY.MM.DD / YYYY-MM-DD / YYYY/MM/DD
-        if (!voteDate) {
-          const m = line.match(/\b(20\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})\b/);
-          if (m) {
-            const [ , y, mo, d ] = m;
-            const mm = ('0' + mo).slice(-2); const dd = ('0' + d).slice(-2);
-            voteDate = `${y}.${mm}.${dd}`;
-          }
-        }
-        // 시간: HH:MM (24h)
-        if (!voteTime) {
-          const t = line.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/);
-          if (t) voteTime = t[0];
-        }
-        // 고유번호: No. M- + [A-Za-z0-9] 가변 길이 (>=6)
-        if (!voteNo) {
-          const n = line.match(/No\.?\s*M-([A-Za-z0-9]{6,64})\b/i);
-          if (n) voteNo = `No.M-${n[1]}`; // 공백 제거·형식 통일
-        }
-      }
-      return { voteDate, voteTime, voteNo };
+    function toHalfwidth(str) {
+      return str.replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+                .replace(/\u3000/g, ' ');
+    }
+    function normalizePunct(str){
+      return str
+        .replace(/[：]/g, ':')
+        .replace(/[．·。]/g, '.')
+        .replace(/[／]/g, '/')
+        .replace(/[－–—]/g, '-')
+        .replace(/[，]/g, ',');
+    }
+    function fixDigitLookalikes(str){
+      return str
+        .replace(/(?<=\d)[Oo](?=\d)/g, '0')
+        .replace(/(?<=\d)[lI](?=\d)/g, '1')
+        .replace(/(?<=\d)[Ss](?=\d)/g, '5');
     }
 
-    async function ocrWithTesseract(srcOrFile, opts = {}) {
+    function extractFields(raw) {
+      let text = fixDigitLookalikes(normalizePunct(toHalfwidth(raw)));
+      const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+      let voteDate = '', voteNo = '';
+      const whole = lines.join(' ');
+
+      function findDate(s){
+        let m = s.match(/\b(20\d{2})[.\/-]\s?(\d{1,2})[.\/-]\s?(\d{1,2})\b/);
+        if (!m) m = s.match(/\b(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\b/);
+        if (!m) {
+          const m2 = s.match(/\b(\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})\b/);
+          if (m2){
+            const yy = Number(m2[1]);
+            const y4 = 2000 + yy;
+            return `${y4}.${String(m2[2]).padStart(2,'0')}.${String(m2[3]).padStart(2,'0')}`;
+          }
+          return '';
+        }
+        const y = m[1], mo = String(m[2]).padStart(2,'0'), d = String(m[3]).padStart(2,'0');
+        return `${y}.${mo}.${d}`;
+      }
+
+      function findNo(s){
+        const m = s.match(/No\.?\s*M-([A-Za-z0-9_]{6,64})\b/);
+        return m ? `No.M-${m[1]}` : '';
+      }
+
+      voteDate = findDate(whole);
+      voteNo   = findNo(whole);
+
+      if (!voteDate || !voteNo){
+        for (const line of lines){
+          if (!voteDate) voteDate = findDate(line);
+          if (!voteNo)   voteNo   = findNo(line);
+        }
+      }
+      return { voteDate, voteNo };
+    }
+
+    async function ocrWithTesseract(srcOrFile) {
       const worker = await Tesseract.createWorker();
       await worker.load();
-      await worker.loadLanguage('eng');
-      await worker.initialize('eng');
-      // 1차: 일반 블록 인식 + 화이트리스트
+      await worker.loadLanguage('eng+kor');
+      await worker.initialize('eng+kor');
       await worker.setParameters({
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-:/',
-        tessedit_pageseg_mode: '6', // Assume a single uniform block of text
-        preserve_interword_spaces: '1',
-        user_defined_dpi: '300'
+        tessedit_pageseg_mode: '6',
+        user_defined_dpi: '300',
+        preserve_interword_spaces: '1'
       });
       let { data: { text } } = await worker.recognize(srcOrFile);
       let f = extractFields(text);
 
-      // 고유번호를 못 잡으면 하단 집중 2차 스캔 (단일 라인 가정)
-      if (!f.voteNo) {
-        // 이미지 크기 파악
+      if (!f.voteNo || !f.voteDate) {
         let url = typeof srcOrFile === 'string' ? srcOrFile : URL.createObjectURL(srcOrFile);
         const img = new Image(); img.src = url; try { await img.decode(); } catch {}
-        const haveSize = img.naturalWidth && img.naturalHeight;
-        if (haveSize) {
-          const rect = {
-            left: 0,
-            top: Math.floor(img.naturalHeight * 0.65),
-            width: img.naturalWidth,
-            height: Math.floor(img.naturalHeight * 0.35)
-          };
-          await worker.setParameters({ tessedit_pageseg_mode: '7' }); // Treat as a single text line
-          const { data: { text: text2 } } = await worker.recognize(url, { rectangle: rect });
-          const f2 = extractFields(text2);
-          f.voteDate ||= f2.voteDate; f.voteTime ||= f2.voteTime; f.voteNo ||= f2.voteNo;
+        if (img.naturalWidth && img.naturalHeight) {
+          const rectBottom = { left: 0, top: Math.floor(img.naturalHeight*0.65), width: img.naturalWidth, height: Math.floor(img.naturalHeight*0.35)};
+          const rectTop    = { left: 0, top: 0, width: img.naturalWidth, height: Math.floor(img.naturalHeight*0.35)};
+          await worker.setParameters({ tessedit_pageseg_mode: '7' });
+          const { data: { text: tBottom } } = await worker.recognize(url, { rectangle: rectBottom });
+          const fb = extractFields(tBottom);
+          f.voteNo ||= fb.voteNo; f.voteDate ||= fb.voteDate;
+          if (!f.voteDate){
+            const { data: { text: tTop } } = await worker.recognize(url, { rectangle: rectTop });
+            const ft = extractFields(tTop);
+            f.voteDate ||= ft.voteDate;
+          }
         }
       }
 
@@ -116,7 +141,6 @@
       return f;
     }
 
-    // 붙여넣기 이미지 감지 + OCR 분석
     window.addEventListener('paste', async (e) => {
       const items = e.clipboardData.items;
       for (let i = 0; i < items.length; i++) {
@@ -127,8 +151,8 @@
 
           appendMessage('user', `<img src="${url}" class="max-w-xs mt-1 rounded border shadow">`);
 
-          const { voteDate, voteTime, voteNo } = await ocrWithTesseract(file);
-          const result = `${voteDate || '❌'}\t${voteTime || '❌'}\t${voteNo || '❌'}`;
+          const { voteDate, voteNo } = await ocrWithTesseract(file);
+          const result = `${voteDate || '❌'}\t${voteNo || '❌'}`;
           appendMessage('bot', `<pre><code>${result}</code></pre>`);
         }
       }
