@@ -19,7 +19,7 @@
 
   <div class="w-full max-w-xl flex items-center space-x-2">
     <input type="text" id="chatInput" placeholder="이미지를 붙여넣으세요... 또는 부여번호(AA1234)를 입력" class="flex-grow px-3 py-2 border rounded" />
-    <button id="sendBtn" class="bg-blue-600 text-white px-4 py-2 rounded btn">입력</button>
+    <button type="button" id="sendBtn" class="bg-blue-600 text-white px-4 py-2 rounded btn">입력</button>
   </div>
 
   <!-- 결과 패널: 부여번호 / 날짜 / 고유번호 테이블 & 전체복사 -->
@@ -51,10 +51,6 @@
     const copyAllBtn = document.getElementById('copyAllBtn');
     const resultTbody = document.getElementById('resultTbody');
 
-    );
-      } catch (_) {}
-    }
-
     // 공용: 텍스트를 시스템 클립보드로 복사 (탭 보존)
     async function copyToClipboard(text) {
       try {
@@ -81,8 +77,8 @@
     const rows = []; // { assign, date, code }
 
     function parseAssign(text){
-      const m = (text || '').match(/([A-Za-z]{2}\d{4})/);
-      return m ? m[1].toUpperCase() : null;
+      const s = (text || '').trim();
+      return /^[A-Za-z]{2}[0-9]{4}$/.test(s) ? s : null; // 전체 일치만 인정
     }
 
     function setAssign(assign){
@@ -170,15 +166,22 @@
     function handleSend() {
       const text = chatInput.value.trim();
       if (!text) return;
+
+      // 유저 메시지 표시
       appendMessage('user', text);
       chatInput.value = '';
 
-      // 입력 텍스트를 부여번호로 인식 (AA1234)
+      // 텍스트가 정확히 부여번호(알파벳2+숫자4)인지 검사
       const assign = parseAssign(text);
       if (assign) {
+        // 유효: 부여번호 설정(테이블 리셋 포함) + 안내 응답
         setAssign(assign);
-        appendMessage('bot', `부여번호 설정: <b>${assign}</b> (테이블 리셋)`);
+        appendMessage('bot', '부여번호 ' + text + ' 입니다.');
       } else {
+        // 무효: 안내만, 테이블 리셋 없음
+        appendMessage('bot', '잘못된 접근입니다.');
+      }
+    } else {
         appendMessage('bot', `부여번호 형식은 <b>AA1234</b> 입니다.`);
       }
     }
