@@ -45,10 +45,6 @@
       if (!text) return;
       appendMessage('user', text);
       chatInput.value = '';
-
-      setTimeout(() => {
-        appendMessage('bot', '안녕하세요');
-      }, 500);
     }
 
     sendBtn.addEventListener('click', handleSend);
@@ -57,7 +53,7 @@
     });
 
     // 붙여넣기 이미지 감지 + OCR 분석
-    chatInput.addEventListener('paste', async (e) => {
+    window.addEventListener('paste', async (e) => {
       const items = e.clipboardData.items;
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
@@ -65,34 +61,31 @@
           const file = item.getAsFile();
           const url = URL.createObjectURL(file);
 
-          // 유저 이미지 메시지 출력
           appendMessage('user', `<img src="${url}" class="max-w-xs mt-1 rounded border shadow">`);
 
-          // OCR 처리
-          const worker = Tesseract.createWorker();
+          const worker = await Tesseract.createWorker();
           await worker.load();
           await worker.loadLanguage('eng');
           await worker.initialize('eng');
           const { data: { text } } = await worker.recognize(file);
           await worker.terminate();
 
-          // 정보 추출
-          const lines = text.split(\"\\n\").map(line => line.trim()).filter(Boolean);
+          const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
           let voteDate = '', voteTime = '', voteNo = '';
 
           for (let line of lines) {
-            if (!voteDate && /\\d{4}[./-]\\d{1,2}[./-]\\d{1,2}/.test(line)) {
-              voteDate = line.match(/\\d{4}[./-]\\d{1,2}[./-]\\d{1,2}/)[0].replace(/[./]/g, '.');
+            if (!voteDate && /\d{4}[./-]\d{1,2}[./-]\d{1,2}/.test(line)) {
+              voteDate = line.match(/\d{4}[./-]\d{1,2}[./-]\d{1,2}/)[0].replace(/[./]/g, '.');
             }
-            if (!voteTime && /\\d{1,2}:\\d{2}/.test(line)) {
-              voteTime = line.match(/\\d{1,2}:\\d{2}/)[0];
+            if (!voteTime && /\d{1,2}:\d{2}/.test(line)) {
+              voteTime = line.match(/\d{1,2}:\d{2}/)[0];
             }
-            if (!voteNo && /No\\.?\\s?\\d{3,}/i.test(line)) {
-              voteNo = line.match(/No\\.?\\s?\\d{3,}/i)[0].replace(/\\s+/g, '');
+            if (!voteNo && /No\.?\s?\d{3,}/i.test(line)) {
+              voteNo = line.match(/No\.?\s?\d{3,}/i)[0].replace(/\s+/g, '');
             }
           }
 
-          const result = `${voteDate || '❌'}\\t${voteTime || '❌'}\\t${voteNo || '❌'}`;
+          const result = `${voteDate || '❌'}\t${voteTime || '❌'}\t${voteNo || '❌'}`;
           appendMessage('bot', `<code>${result}</code>`);
         }
       }
