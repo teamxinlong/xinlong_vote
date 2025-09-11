@@ -179,14 +179,17 @@
       }
 
       // 고유번호: No. M- + 영숫자/언더바/하이픈 (오탈자 흡수: N0, M_, M— 등)
-      function findNo(s){
-        // N[o0]\.?\s*M[-_–—]([A-Za-z0-9_-]{4,128})
-        const m = s.match(/\bN[o0]\.?\s*M[-_–—]([A-Za-z0-9_-]{4,128})\b/i);
-        if (!m) return '';
-        // 꼬리 쓰레기 제거, 대시 변형 통일
-        const core = m[1].replace(/[^A-Za-z0-9_-].*$/, '').replace(/[–—]/g, '-');
-        return `No.M-${core}`;
-      }
+     function findNo(s){
+  // N[o0] 허용, M- / M_ / M— / M– 허용
+  // 본문은 영숫자/언더바/하이픈 + (중간 공백/줄바꿈도 허용) 길이 가변
+  const m = s.match(/\bN[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,256})/i);
+  if (!m) return '';
+  // OCR이 중간에 끼운 공백/줄바꿈 제거 + 대시 통일 + 끝쪽 잡문자만 정리
+  let core = m[1].replace(/\s+/g, '');    // 내부 공백/개행 전부 제거
+  core = core.replace(/[–—]/g, '-');      // 하이픈 변종 통일
+  core = core.replace(/[^A-Za-z0-9_-]+$/,''); // 끝에 붙은 쓰레기만 제거(앞은 건드리지 않음)
+  return `No.M-${core}`;
+}
 
       voteDate = findDate(whole);
       voteNo   = findNo(whole);
