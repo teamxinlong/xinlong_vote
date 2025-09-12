@@ -34,7 +34,8 @@
     <button id="btnAssignAndDone" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded btn">
       고유번호 부여+검수 완료
     </button>
-    <button id="btnDone" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded btn">
+    <!-- emerald → green (Tailwind 2.2 호환 보장) -->
+    <button id="btnDone" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded btn">
       검수 완료
     </button>
   </div>
@@ -151,8 +152,8 @@
       }
 
       function setAssign(assign){
-        currentAssign = assign;
-        assignLabel.textContent = assign || '미설정';
+        currentAssign = assign.toUpperCase(); // 안전하게 대문자 보장
+        assignLabel.textContent = currentAssign || '미설정';
         rows.length = 0; // 테이블 리셋
         renderTable();
       }
@@ -219,7 +220,7 @@
         var assign = parseAssign(text);
         if (assign) {
           setAssign(assign); // 리셋 + 설정
-          appendMessage('bot', '고유번호 ' + assign + ' 입니다.');
+          appendMessage('bot', '고유번호 ' + currentAssign + ' 입니다.');
         } else {
           appendMessage('bot', '잘못된 접근입니다.'); // 테이블 유지
         }
@@ -394,7 +395,7 @@
         if (!currentAssign) return { error: '고유번호를 먼저 입력하세요. 예) AA0001' };
         if (rows.length === 0) return { error: '테이블에 데이터가 없습니다.' };
 
-        // 가장 많이 등장한 날짜(동률이면 사전/최근 우선) → MM.DD로 표시
+        // 가장 많이 등장한 날짜 선택 → MM.DD로 표시
         var countByDate = {};
         rows.forEach(r => { if (r.date) countByDate[r.date] = (countByDate[r.date]||0)+1; });
         var dates = Object.keys(countByDate);
@@ -407,7 +408,7 @@
         }
         var mmdd = target.replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3');
         return {
-          assignLower: currentAssign.toLowerCase(),
+          assignUpper: (currentAssign || '').toUpperCase(), // 항상 대문자
           count: rows.length,
           mmdd: mmdd || ''
         };
@@ -417,7 +418,7 @@
         var info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error); return; }
         var msg = '씬롱이에게 소중한 투표 감사합니다 ❤\n'
-                + '부여된 고유번호는 ' + info.assignLower + '입니다.\n'
+                + '부여된 고유번호는 ' + info.assignUpper + '입니다.\n'
                 + info.mmdd + ' 총 ' + info.count + '표 집계되었습니다. 감사합니다 😺❤';
         appendMessage('bot', msg, { plainText: true, copyText: msg });
       };
@@ -426,7 +427,7 @@
         var info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error); return; }
         var msg = '씬롱이에게 소중한 투표 감사합니다 ❤\n'
-                + info.assignLower + '님, ' + info.mmdd + ' 총 ' + info.count + '표 집계되었습니다. 감사합니다 😺❤';
+                + info.assignUpper + '님, ' + info.mmdd + ' 총 ' + info.count + '표 집계되었습니다. 감사합니다 😺❤';
         appendMessage('bot', msg, { plainText: true, copyText: msg });
       };
 
