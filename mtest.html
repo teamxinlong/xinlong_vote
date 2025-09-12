@@ -329,14 +329,11 @@
       /* ===============================
          ▼ 정확도 향상: 필드별 프로파일 OCR
          =============================== */
-
-      // 필드별 화이트리스트
       const DATE_WHITELIST   = '0123456789:. -/KST년월일시hH';
       const SERIAL_WHITELIST = 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
       // 영역 인식 공용 함수
       async function recognizeRect(w, src, rect, params){
-        // 임시 파라미터 적용
         if (params && params.tessedit_pageseg_mode != null) {
           await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
         }
@@ -344,7 +341,6 @@
           await w.setParameters({ tessedit_char_whitelist: params.tessedit_char_whitelist });
         }
         const { data:{ text } } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
-        // 기본값 복구
         await w.setParameters({
           tessedit_pageseg_mode: 6,
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
@@ -363,7 +359,6 @@
           tessedit_pageseg_mode: 6,
           user_defined_dpi: '300',
           preserve_interword_spaces: '1',
-          // 사전 비활성화 → 랜덤코드/숫자 인식 유리
           load_system_dawg: '0',
           load_freq_dawg: '0',
           language_model_penalty_non_dict_word: '0',
@@ -371,6 +366,28 @@
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
         });
         return worker;
+      }
+
+      // --- 시리얼 후보 정규화 & 스코어링 ---
+      function normalizeSerial(raw){
+        if (!raw) return '';
+        let s = raw.replace(/\s+/g,'').replace(/[–—]/g,'-').replace(/[ˍ﹎＿]/g,'_');
+        const m = s.match(/N[o0]\.?\s*M[-_](.+)$/i) || s.match(/M[-_](.+)$/i);
+        if (m) s = m[1]; // M- 뒤만
+        s = s
+          .replace(/([A-Za-z0-9])[Oo]([A-Za-z0-9])/g,'$10$2')
+          .replace(/([A-Za-z0-9])[lI]([A-Za-z0-9])/g,'$11$2')
+          .replace(/([A-Za-z0-9])[Ss]([A-Za-z0-9])/g,'$15$2')
+          .replace(/[^A-Za-z0-9_-]/g,'');
+        if (s.length < 4) return '';
+        return 'No.M-' + s;
+      }
+      function scoreSerial(s){
+        if (!s) return -1e9;
+        const len = s.length;
+        const amb = (s.match(/[OSIl]/g)||[]).length;
+        const rep = (s.match(/__|--/g)||[]).length;
+        return len*5 - amb*2 - rep*3;
       }
 
       // 스테이지드 OCR
@@ -401,15 +418,37 @@
           if (!f.voteTime) f.voteTime = fm.voteTime;
         }
 
-        // 3) 시리얼 부족 → 하단 라인 전용(PSM 7, 시리얼 전용 whitelist)
-        if (!f.voteNo && W && H){
+        // 3) 시리얼 부족/짧음 → 하단 라인 전용 앙상블(PSM 7/13/11)
+        if ((!f.voteNo || f.voteNo.length < 10) && W && H){
           const botRect = { left: 0, top: Math.floor(H*0.65), width: W, height: Math.floor(H*0.35) };
-          const textBot = await recognizeRect(w, url, botRect, {
-            tessedit_pageseg_mode: 7,
+
+          const tries = [];
+          const t1 = await recognizeRect(w, url, botRect, {
+            tessedit_pageseg_mode: 7,   // single line
             tessedit_char_whitelist: SERIAL_WHITELIST
-          });
-          const fb = extractFields(textBot);
-          if (!f.voteNo) f.voteNo = fb.voteNo;
+          }); tries.push(t1);
+
+          const t2 = await recognizeRect(w, url, botRect, {
+            tessedit_pageseg_mode: 13,  // raw line
+            tessedit_char_whitelist: SERIAL_WHITELIST
+          }); tries.push(t2);
+
+          const t3 = await recognizeRect(w, url, botRect, {
+            tessedit_pageseg_mode: 11,  // sparse text
+            tessedit_char_whitelist: SERIAL_WHITELIST
+          }); tries.push(t3);
+
+          const candidates = tries
+            .map(normalizeSerial)
+            .filter(x => /No\.?M[-_][A-Za-z0-9_-]{4,}/i.test(x));
+
+          if (candidates.length){
+            candidates.sort((a,b)=>scoreSerial(b)-scoreSerial(a));
+            const best = candidates[0];
+            if (!f.voteNo || scoreSerial(best) > scoreSerial(f.voteNo)) {
+              f.voteNo = best;
+            }
+          }
         }
 
         return f;
