@@ -22,8 +22,10 @@
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
   <h1 class="text-xl sm:text-2xl font-bold mb-3">🐱 허씬롱 마갤 자체제작 투표 집계 시스템(모바일)📱 ✅</h1>
 
+  <!-- 채팅 -->
   <div id="chatbox" class="w-full max-w-md bg-white p-3 rounded shadow space-y-3 mb-3"></div>
 
+  <!-- 모바일 입력 영역 -->
   <div class="w-full max-w-md space-y-2">
     <div class="flex gap-2">
       <input id="assignInput" type="text" inputmode="text" autocomplete="off"
@@ -42,6 +44,7 @@
     <div class="text-xs text-gray-600" id="status">대기 중</div>
   </div>
 
+  <!-- 검수 메시지 버튼 -->
   <div id="actionBar" class="w-full max-w-md flex gap-2 mt-3 mb-1">
     <button id="btnAssignAndDone" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded btn">
       고유번호 부여+검수 완료
@@ -51,6 +54,7 @@
     </button>
   </div>
 
+  <!-- 결과 테이블 -->
   <div id="resultPanel" class="w-full max-w-md mt-1">
     <div class="flex items-center justify-between mb-1">
       <div class="text-sm text-gray-700">고유번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
@@ -90,12 +94,12 @@
       const btnAssignAndDone = document.getElementById('btnAssignAndDone');
       const btnDone = document.getElementById('btnDone');
 
-      let currentAssign = null;
-      const rows = [];       // { assign, date, time, code }
+      let currentAssign = null;              // 'AA0001'
+      const rows = [];                       // { assign, date, time, code }
       let queue = [];
       let processing = false;
       let worker = null;
-      const seenImageHashes = new Set();
+      const seenImageHashes = new Set();     // 중복 이미지 체크
 
       function setStatus(txt){ statusEl.textContent = txt; }
 
@@ -170,7 +174,7 @@
         setTimeout(()=>copyAllBtn.textContent=old,1500);
       };
 
-      // ===== 전처리/추출 =====
+      // ===== 문자열 전처리 & 필드 추출 =====
       function toHalfwidth(str){
         return str.replace(/[\uFF01-\uFF5E]/g, ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/\u3000/g,' ');
       }
@@ -191,8 +195,6 @@
         } while (str!==prev);
         return str;
       }
-
-      // 날짜 바로 뒤 20자 이내(또는 같은 줄) 시간만 인정
       function extractFields(raw){
         let text = fixDigitLookalikes(normalizePunct(toHalfwidth(raw)));
         const lines = text.split(/\n+/).map(l=>l.trim()).filter(Boolean);
@@ -242,14 +244,18 @@
         return { voteDate, voteTime, voteNo };
       }
 
+      // ===== Tesseract 래퍼들 =====
       const DATE_WHITELIST   = '0123456789:. -/KST년월일시hH';
       const SERIAL_WHITELIST = 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-      // 텍스트만 돌려주는 안전 래퍼
       async function recognizeText(w, src, rect, params){
-        if (params?.tessedit_pageseg_mode != null) await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
-        if (params?.tessedit_char_whitelist) await w.setParameters({ tessedit_char_whitelist: params.tessedit_char_whitelist });
+        if (params?.tessedit_pageseg_mode != null)
+          await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
+        if (params?.tessedit_char_whitelist)
+          await w.setParameters({ tessedit_char_whitelist: params.tessedit_char_whitelist });
+
         const { data:{ text } } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
+
         await w.setParameters({
           tessedit_pageseg_mode: 6,
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
@@ -274,39 +280,7 @@
         return worker;
       }
 
-      // 하단 30% 안에서 words bbox로 No. 시작 줄만 "얇게" 캡처
-      async function locateSerialTightRect(w, src, searchRect){
-        await w.setParameters({ tessedit_pageseg_mode: 6, tessedit_char_whitelist: SERIAL_WHITELIST });
-        const { data } = await w.recognize(src, { rectangle: searchRect });
-        const words = data.words || [];
-
-        let idxStart = -1;
-        for (let i=0;i<words.length;i++){
-          const t = (words[i].text || '').replace(/\s+/g,'');
-          if (/^No\.?$/i.test(t) || /^No\.?M[-_]/i.test(t) || /^M[-_]/.test(t)) { idxStart = i; break; }
-        }
-        if (idxStart < 0) return null;
-
-        let idxEnd = Math.min(words.length-1, idxStart + 8);
-
-        const padX = 12, padY = 8;
-        let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
-        for (let i=idxStart;i<=idxEnd;i++){
-          const b = words[i].bbox || words[i].box;
-          if (!b) continue;
-          x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0);
-          x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1);
-        }
-        if (x1 < 0) return null;
-
-        return {
-          left:  (searchRect.left||0) + Math.max(0, x0 - padX),
-          top:   (searchRect.top ||0) + Math.max(0, y0 - padY),
-          width: (x1 - x0) + padX*2,
-          height:(y1 - y0) + padY*2
-        };
-      }
-
+      // ===== 시리얼: 라인 bbox 기반으로 "No. 있는 한 줄"만 슬림하게 재인식 =====
       function normalizeSerial(raw){
         if (!raw) return '';
         let seg = String(raw).split(/\r?\n/)[0];
@@ -324,24 +298,45 @@
         if (s.length < 4) return '';
         return 'No.M-' + s;
       }
-      function scoreSerial(s){
-        if (!s) return -1e9;
-        const len = s.length;
-        const amb = (s.match(/[OSIl]/g)||[]).length;
-        const rep = (s.match(/__|--/g)||[]).length;
-        return len*5 - amb*2 - rep*3;
+
+      async function getSerialFromBottomLine(w, url, W, H){
+        const searchRect = { left: 0, top: Math.floor(H*0.68), width: W, height: Math.floor(H*0.30) };
+
+        await w.setParameters({ tessedit_pageseg_mode: 6, tessedit_char_whitelist: SERIAL_WHITELIST });
+        const { data } = await w.recognize(url, { rectangle: searchRect });
+        const lines = data.lines || [];
+
+        let target = null;
+        for (const ln of lines){
+          const txt = (ln.text || '').replace(/\s+/g,'');
+          if (/No\.?/i.test(txt) || /M[-_]/.test(txt)){
+            if (!target || ln.bbox.y0 > target.bbox.y0) target = ln; // 더 아래 줄 우선
+          }
+        }
+        if (!target) return '';
+
+        const padX = 14, padY = 10;
+        const rect = {
+          left:  (searchRect.left||0) + Math.max(0, target.bbox.x0 - padX),
+          top:   (searchRect.top ||0) + Math.max(0, target.bbox.y0 - padY),
+          width: (target.bbox.x1 - target.bbox.x0) + padX*2,
+          height:(target.bbox.y1 - target.bbox.y0) + padY*2
+        };
+        const lineText = await recognizeText(w, url, rect, { tessedit_pageseg_mode: 7, tessedit_char_whitelist: SERIAL_WHITELIST });
+        return normalizeSerial(lineText);
       }
 
+      // ===== 한 장 OCR =====
       async function getOCR(file){
         const w = await getWorker();
 
-        // 0) 전체 텍스트 1회
+        // 0) 전체 1회
         const t0 = await recognizeText(w, file, null, { tessedit_pageseg_mode: 6 });
         let f = extractFields(t0 || '');
 
         // 1) 중앙 25~70%에서 날짜/시간 보강
         const url = URL.createObjectURL(file);
-        const img = new Image(); img.src=url; try{ await img.decode(); }catch(_){}
+        const img = new Image(); img.src = url; try{ await img.decode(); } catch(_){}
         const W = img.naturalWidth || 0, H = img.naturalHeight || 0;
 
         if ((!f.voteDate || !f.voteTime) && W && H){
@@ -352,28 +347,16 @@
           if (!f.voteTime) f.voteTime = fm.voteTime;
         }
 
-        // 2) 하단 30%에서 "단어기반 얇은 박스"만 재인식 → 꼬리 제거
-        if ((!f.voteNo || f.voteNo.length < 10) && W && H){
-          const searchRect = { left: 0, top: Math.floor(H*0.70), width: W, height: Math.floor(H*0.28) };
-          const tightRect = await locateSerialTightRect(w, url, searchRect);
-          const targetRect = tightRect || searchRect;
-
-          const tries = [];
-          tries.push(await recognizeText(w, url, targetRect, { tessedit_pageseg_mode: 7,  tessedit_char_whitelist: SERIAL_WHITELIST }));
-          tries.push(await recognizeText(w, url, targetRect, { tessedit_pageseg_mode: 13, tessedit_char_whitelist: SERIAL_WHITELIST }));
-          tries.push(await recognizeText(w, url, targetRect, { tessedit_pageseg_mode: 11, tessedit_char_whitelist: SERIAL_WHITELIST }));
-
-          const candidates = tries.map(normalizeSerial).filter(x => /No\.?M[-_][A-Za-z0-9_-]{4,}/i.test(x));
-          if (candidates.length){
-            candidates.sort((a,b)=>scoreSerial(b)-scoreSerial(a));
-            const best = candidates[0];
-            if (!f.voteNo || scoreSerial(best) > scoreSerial(f.voteNo)) f.voteNo = best;
-          }
+        // 2) 시리얼: "No. 포함 줄"만 얇게 잘라 재인식
+        if (W && H){
+          const serial = await getSerialFromBottomLine(w, url, W, H);
+          if (serial) f.voteNo = serial;
         }
+
         return f;
       }
 
-      // 날짜별 집계 메시지
+      // ===== 버튼 메시지(날짜별 집계 포함) =====
       function summarizeForMessage(){
         if (!currentAssign) return { error: '고유번호를 먼저 입력하세요. 예) AA0001' };
         if (rows.length === 0) return { error: '테이블에 데이터가 없습니다.' };
@@ -403,7 +386,7 @@
         appendMessage('bot', msg, { plainText:true, copyText: msg });
       };
 
-      // 중복 이미지: 퍼셉추얼 해시
+      // ===== 중복 이미지(퍼셉추얼 해시) =====
       async function imagePerceptualHash(file){
         const url = URL.createObjectURL(file);
         const img = new Image(); img.src = url; await img.decode().catch(()=>{});
@@ -420,6 +403,7 @@
         }
       }
 
+      // ===== 큐 처리 =====
       async function drainQueue(){
         if (processing) return;
         processing = true; setStatus(`처리 중 (${queue.length}장 대기)`);
@@ -449,6 +433,7 @@
         setStatus('대기 중'); processing = false;
       }
 
+      // ===== 이벤트 바인딩 =====
       assignBtn.onclick = ()=>{
         const s = assignInput.value.trim();
         appendMessage('user', s);
@@ -468,9 +453,9 @@
         if (imgs.length){ queue.push(...imgs); drainQueue(); }
       });
 
-      window.addEventListener('beforeunload', async ()=>{ try { if (worker){ await worker.terminate(); worker=null; } } catch(_){} });
-
+      // init
       renderTable();
+      window.addEventListener('beforeunload', async ()=>{ try { if (worker){ await worker.terminate(); worker=null; } } catch(_){} });
     })();
   </script>
 </body>
