@@ -29,7 +29,7 @@
     </form>
   </div>
 
-  <!-- ▶ 검수 메시지 버튼 바 (채팅과 테이블 사이) -->
+  <!-- ▶ 검수 메시지 버튼 바 -->
   <div id="actionBar" class="w-full max-w-xl flex gap-2 mt-3 mb-1">
     <button id="btnAssignAndDone" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded btn">
       고유번호 부여+검수 완료
@@ -87,6 +87,7 @@
       let currentAssign = null;         // 'AA0001'
       const rows = [];                  // { assign, date, time, code }
       let worker = null;                // tesseract 재사용
+      const seenImageHashes = new Set();// 중복 방지용 퍼셉추얼 해시
 
       // 유틸
       async function copyToClipboard(text) {
@@ -226,7 +227,7 @@
       }
       chatForm.addEventListener('submit', function(e){ e.preventDefault(); handleSend(); });
 
-      // ===== OCR 전처리 (lookbehind 미사용) =====
+      // ===== OCR 전처리 =====
       function toHalfwidth(str) {
         return str.replace(/[\uFF01-\uFF5E]/g, function(ch){ return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); })
                   .replace(/\u3000/g, ' ');
@@ -239,7 +240,6 @@
           .replace(/[－–—]/g, '-')
           .replace(/[,，]/g, ',');
       }
-      // 00:02 및 구분자 주변 O→0 보정
       function fixDigitLookalikes(str){
         var prev;
         do {
@@ -292,11 +292,9 @@
           return 'No.M-' + core;
         }
 
-        // 1) 전체에서 날짜-시간 먼저
         var dtWhole = findDateTime(whole);
         if (dtWhole){ voteDate = dtWhole.date; voteTime = dtWhole.time; }
 
-        // 2) 실패 시 라인/인접라인 결합
         if (!voteDate || !voteTime){
           for (var i=0;i<lines.length;i++){
             var dti = findDateTime(lines[i]);
@@ -317,7 +315,6 @@
           }
         }
 
-        // 3) 시리얼넘버
         voteNo = findNo(whole);
         if (!voteNo){
           for (var j=0;j<lines.length;j++){ var v = findNo(lines[j]); if (v){ voteNo = v; break; } }
@@ -332,7 +329,6 @@
       const DATE_WHITELIST   = '0123456789:. -/KST년월일시hH';
       const SERIAL_WHITELIST = 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-      // 영역 인식 공용 함수
       async function recognizeRect(w, src, rect, params){
         if (params && params.tessedit_pageseg_mode != null) {
           await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
@@ -348,7 +344,6 @@
         return text || '';
       }
 
-      // 워커(사전 OFF)
       async function getWorker(){
         if (worker) return worker;
         worker = await Tesseract.createWorker();
@@ -373,7 +368,7 @@
         if (!raw) return '';
         let s = raw.replace(/\s+/g,'').replace(/[–—]/g,'-').replace(/[ˍ﹎＿]/g,'_');
         const m = s.match(/N[o0]\.?\s*M[-_](.+)$/i) || s.match(/M[-_](.+)$/i);
-        if (m) s = m[1]; // M- 뒤만
+        if (m) s = m[1];
         s = s
           .replace(/([A-Za-z0-9])[Oo]([A-Za-z0-9])/g,'$10$2')
           .replace(/([A-Za-z0-9])[lI]([A-Za-z0-9])/g,'$11$2')
@@ -393,14 +388,13 @@
       // 후보글자(choices)+글리프 높이로 I / l / 1, O / 0, S / 5 보정
       async function recognizeSerialWithChoices(w, src, rect){
         await w.setParameters({
-          tessedit_pageseg_mode: 7, // single line
+          tessedit_pageseg_mode: 7,
           tessedit_char_whitelist: 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
           save_blob_choices: '1'
         });
 
         const { data } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
 
-        // 라인 내 대표 높이(모호 문자 제외)
         const hs = [];
         (data.symbols || []).forEach(s => {
           const ch = s.text || '';
@@ -467,7 +461,7 @@
       async function ocrWithTesseract(srcOrFile) {
         const w = await getWorker();
 
-        // 1) 전체 텍스트 1차 인식(기본 psm=6)
+        // 1) 전체 텍스트 1차 인식
         const text0 = await recognizeRect(w, srcOrFile, null, {
           tessedit_pageseg_mode: 6,
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
@@ -479,7 +473,7 @@
         const img = new Image(); img.src = url; try { await img.decode(); } catch(_){}
         const W = img.naturalWidth || 0, H = img.naturalHeight || 0;
 
-        // 2) 날짜/시간 부족 → 중앙부 라인 전용(PSM 7, 날짜 전용 whitelist)
+        // 2) 날짜/시간 부족 → 중앙부 라인 전용
         if ((!f.voteDate || !f.voteTime) && W && H){
           const midRect = { left: 0, top: Math.floor(H*0.35), width: W, height: Math.floor(H*0.35) };
           const textMid = await recognizeRect(w, url, midRect, {
@@ -491,17 +485,14 @@
           if (!f.voteTime) f.voteTime = fm.voteTime;
         }
 
-        // 3) 시리얼 부족/짧음 → 하단 라인 전용 앙상블 + choices 보정(I/l/1 강화)
+        // 3) 시리얼 부족/짧음 → 하단 라인 전용 앙상블 + choices 보정
         if ((!f.voteNo || f.voteNo.length < 10) && W && H){
           const botRect = { left: 0, top: Math.floor(H*0.65), width: W, height: Math.floor(H*0.35) };
 
           const tries = [];
-
-          // (a) choices+height 기반 보정
           const tChoices = await recognizeSerialWithChoices(w, url, botRect);
           tries.push(tChoices);
 
-          // (b) PSM 7/13/11 기본 앙상블
           const t1 = await recognizeRect(w, url, botRect, {
             tessedit_pageseg_mode: 7,
             tessedit_char_whitelist: SERIAL_WHITELIST
@@ -533,32 +524,6 @@
         return f;
       }
 
-      // 이미지 붙여넣기 → OCR → 행 누적
-      window.addEventListener('paste', async function(e){
-        var items = (e.clipboardData && e.clipboardData.items) ? e.clipboardData.items : [];
-        for (var i=0;i<items.length;i++) {
-          var item = items[i];
-          if (item.kind === 'file' && item.type.indexOf('image/') === 0) {
-            var file = item.getAsFile();
-            var url = URL.createObjectURL(file);
-
-            appendMessage('user', '<img src="'+ url +'" class="max-w-xs mt-1 rounded border shadow">');
-
-            if (!currentAssign){
-              appendMessage('bot', '먼저 고유번호를 입력하세요. 예) <b>AA0001</b>');
-              continue;
-            }
-
-            var r = await ocrWithTesseract(file);
-            var codeOnly = (r.voteNo || '').replace(/^No\.?\s*/i, ''); // No. 제거
-            var line = (r.voteDate || '❌') + '\t' + (r.voteTime || '❌') + '\t' + (codeOnly || '❌');
-            appendMessage('bot', line, { plainText: true, copyText: line });
-
-            if (r.voteDate && r.voteTime && codeOnly) addRow(r.voteDate, r.voteTime, codeOnly);
-          }
-        }
-      });
-
       // ----- 검수 메시지 생성 (날짜별 집계 포함) -----
       function summarizeForMessage(){
         if (!currentAssign) return { error: '고유번호를 먼저 입력하세요. 예) AA0001' };
@@ -588,7 +553,6 @@
         };
       }
 
-      // 버튼 핸들러(날짜별 집계 메시지)
       btnAssignAndDone.onclick = function(){
         const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error); return; }
@@ -625,6 +589,64 @@
 
         appendMessage('bot', msg, { plainText: true, copyText: msg });
       };
+
+      // ===== 중복 이미지 감지: 퍼셉추얼 해시(64x64 픽셀 SHA-256) =====
+      async function imagePerceptualHash(file){
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.src = url;
+        await img.decode().catch(()=>{});
+        const w = 64, h = 64;
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        const data = ctx.getImageData(0,0,w,h).data; // RGBA
+        // SHA-256이 있으면 그걸로, 없으면 간단 해시
+        if (crypto && crypto.subtle) {
+          const digest = await crypto.subtle.digest('SHA-256', data);
+          const hex = Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+          return hex;
+        } else {
+          let hash = 0;
+          for (let i=0;i<data.length;i++) hash = (hash*31 + data[i]) >>> 0;
+          return 'fh-' + hash.toString(16);
+        }
+      }
+
+      // 이미지 붙여넣기 → (중복검사) → OCR → 행 누적
+      window.addEventListener('paste', async function(e){
+        var items = (e.clipboardData && e.clipboardData.items) ? e.clipboardData.items : [];
+        for (var i=0;i<items.length;i++) {
+          var item = items[i];
+          if (item.kind === 'file' && item.type.indexOf('image/') === 0) {
+            var file = item.getAsFile();
+
+            // 1) 퍼셉추얼 해시로 중복 검사
+            const ph = await imagePerceptualHash(file);
+            if (seenImageHashes.has(ph)) {
+              appendMessage('bot', '중복된 이미지입니다.');
+              continue;
+            }
+            seenImageHashes.add(ph);
+
+            var url = URL.createObjectURL(file);
+            appendMessage('user', '<img src="'+ url +'" class="max-w-xs mt-1 rounded border shadow">');
+
+            if (!currentAssign){
+              appendMessage('bot', '먼저 고유번호를 입력하세요. 예) <b>AA0001</b>');
+              continue;
+            }
+
+            var r = await ocrWithTesseract(file);
+            var codeOnly = (r.voteNo || '').replace(/^No\.?\s*/i, ''); // No. 제거
+            var line = (r.voteDate || '❌') + '\t' + (r.voteTime || '❌') + '\t' + (codeOnly || '❌');
+            appendMessage('bot', line, { plainText: true, copyText: line });
+
+            if (r.voteDate && r.voteTime && codeOnly) addRow(r.voteDate, r.voteTime, codeOnly);
+          }
+        }
+      });
 
       // 초기 렌더
       renderTable();
