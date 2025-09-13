@@ -29,8 +29,18 @@
     </form>
   </div>
 
+  <!-- ▶ 검수 메시지 버튼 바 -->
+  <div id="actionBar" class="w-full max-w-xl flex gap-2 mt-3 mb-1">
+    <button id="btnAssignAndDone" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded btn">
+      고유번호 부여+검수 완료
+    </button>
+    <button id="btnDone" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded btn">
+      검수 완료
+    </button>
+  </div>
+
   <!-- 결과 테이블 -->
-  <div id="resultPanel" class="w-full max-w-xl mt-4">
+  <div id="resultPanel" class="w-full max-w-xl mt-2">
     <div class="flex items-center justify-between mb-2">
       <div class="text-sm text-gray-700">고유번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
       <button id="copyAllBtn" class="text-xs px-3 py-1 rounded border btn">전체 복사</button>
@@ -70,11 +80,14 @@
       const assignLabel = document.getElementById('assignLabel');
       const copyAllBtn = document.getElementById('copyAllBtn');
       const resultTbody = document.getElementById('resultTbody');
+      const btnAssignAndDone = document.getElementById('btnAssignAndDone');
+      const btnDone = document.getElementById('btnDone');
 
       // 상태
       let currentAssign = null;         // 'AA0001'
       const rows = [];                  // { assign, date, time, code }
       let worker = null;                // tesseract 재사용
+      const seenImageHashes = new Set();// 중복 방지용 퍼셉추얼 해시
 
       // 유틸
       async function copyToClipboard(text) {
@@ -119,7 +132,7 @@
 
         if (plainText) {
           const pre = document.createElement('pre');
-          pre.textContent = content; // 탭 보존
+          pre.textContent = content; // 탭/줄바꿈 보존
           wrapper.appendChild(pre);
         } else {
           const div = document.createElement('div');
@@ -139,8 +152,8 @@
       }
 
       function setAssign(assign){
-        currentAssign = assign;
-        assignLabel.textContent = assign || '미설정';
+        currentAssign = assign.toUpperCase(); // 안전하게 대문자 보장
+        assignLabel.textContent = currentAssign || '미설정';
         rows.length = 0; // 테이블 리셋
         renderTable();
       }
@@ -207,14 +220,14 @@
         var assign = parseAssign(text);
         if (assign) {
           setAssign(assign); // 리셋 + 설정
-          appendMessage('bot', '고유번호 ' + assign + ' 입니다.');
+          appendMessage('bot', '고유번호 ' + currentAssign + ' 입니다.');
         } else {
           appendMessage('bot', '잘못된 접근입니다.'); // 테이블 유지
         }
       }
       chatForm.addEventListener('submit', function(e){ e.preventDefault(); handleSend(); });
 
-      // ===== OCR 전처리 (lookbehind 미사용) =====
+      // ===== OCR 전처리 =====
       function toHalfwidth(str) {
         return str.replace(/[\uFF01-\uFF5E]/g, function(ch){ return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); })
                   .replace(/\u3000/g, ' ');
@@ -227,7 +240,6 @@
           .replace(/[－–—]/g, '-')
           .replace(/[,，]/g, ',');
       }
-      // 00:02 및 구분자 주변 O→0 보정
       function fixDigitLookalikes(str){
         var prev;
         do {
@@ -280,11 +292,9 @@
           return 'No.M-' + core;
         }
 
-        // 1) 전체에서 날짜-시간 먼저
         var dtWhole = findDateTime(whole);
         if (dtWhole){ voteDate = dtWhole.date; voteTime = dtWhole.time; }
 
-        // 2) 실패 시 라인/인접라인 결합
         if (!voteDate || !voteTime){
           for (var i=0;i<lines.length;i++){
             var dti = findDateTime(lines[i]);
@@ -305,13 +315,33 @@
           }
         }
 
-        // 3) 시리얼넘버
         voteNo = findNo(whole);
         if (!voteNo){
           for (var j=0;j<lines.length;j++){ var v = findNo(lines[j]); if (v){ voteNo = v; break; } }
         }
 
         return { voteDate: voteDate, voteTime: voteTime, voteNo: voteNo };
+      }
+
+      /* ===============================
+         ▼ 정확도 향상: 필드별 프로파일 OCR
+         =============================== */
+      const DATE_WHITELIST   = '0123456789:. -/KST년월일시hH';
+      const SERIAL_WHITELIST = 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+      async function recognizeRect(w, src, rect, params){
+        if (params && params.tessedit_pageseg_mode != null) {
+          await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
+        }
+        if (params && params.tessedit_char_whitelist) {
+          await w.setParameters({ tessedit_char_whitelist: params.tessedit_char_whitelist });
+        }
+        const { data:{ text } } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
+        await w.setParameters({
+          tessedit_pageseg_mode: 6,
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        return text || '';
       }
 
       async function getWorker(){
@@ -324,42 +354,283 @@
           tessedit_pageseg_mode: 6,
           user_defined_dpi: '300',
           preserve_interword_spaces: '1',
+          load_system_dawg: '0',
+          load_freq_dawg: '0',
+          language_model_penalty_non_dict_word: '0',
+          language_model_penalty_non_freq_dict_word: '0',
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
         });
         return worker;
       }
 
+      // --- 시리얼 후보 정규화 & 스코어링 ---
+      function normalizeSerial(raw){
+        if (!raw) return '';
+        let s = raw.replace(/\s+/g,'').replace(/[–—]/g,'-').replace(/[ˍ﹎＿]/g,'_');
+        const m = s.match(/N[o0]\.?\s*M[-_](.+)$/i) || s.match(/M[-_](.+)$/i);
+        if (m) s = m[1];
+        s = s
+          .replace(/([A-Za-z0-9])[Oo]([A-Za-z0-9])/g,'$10$2')
+          .replace(/([A-Za-z0-9])[lI]([A-Za-z0-9])/g,'$11$2')
+          .replace(/([A-Za-z0-9])[Ss]([A-Za-z0-9])/g,'$15$2')
+          .replace(/[^A-Za-z0-9_-]/g,'');
+        if (s.length < 4) return '';
+        return 'No.M-' + s;
+      }
+      function scoreSerial(s){
+        if (!s) return -1e9;
+        const len = s.length;
+        const amb = (s.match(/[OSIl]/g)||[]).length;
+        const rep = (s.match(/__|--/g)||[]).length;
+        return len*5 - amb*2 - rep*3;
+      }
+
+      // 후보글자(choices)+글리프 높이로 I / l / 1, O / 0, S / 5 보정
+      async function recognizeSerialWithChoices(w, src, rect){
+        await w.setParameters({
+          tessedit_pageseg_mode: 7,
+          tessedit_char_whitelist: 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+          save_blob_choices: '1'
+        });
+
+        const { data } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
+
+        const hs = [];
+        (data.symbols || []).forEach(s => {
+          const ch = s.text || '';
+          if (/[A-HJ-RT-Za-hj-rt-z0-9]/.test(ch)) {
+            const bb = s.bbox || s.box || {};
+            const h = (bb.y1 - bb.y0) || 0;
+            if (h) hs.push(h);
+          }
+        });
+        hs.sort((a,b)=>a-b);
+        const medianH = hs.length ? hs[Math.floor(hs.length/2)] : 0;
+
+        function bestFrom(sym, group){
+          if (!sym.choices || !sym.choices.length) return sym.text || '';
+          const cand = sym.choices
+            .filter(c => group.includes(c.text))
+            .sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0];
+          return (cand && cand.text) || (sym.text || '');
+        }
+
+        let out = '';
+        for (let i=0;i<(data.symbols||[]).length;i++){
+          const sym = data.symbols[i];
+          const prev = data.symbols[i-1]?.text || '';
+          const next = data.symbols[i+1]?.text || '';
+          const bb = sym.bbox || sym.box || {};
+          const h  = (bb.y1 - bb.y0) || 0;
+          let ch   = sym.text || '';
+
+          const G_O0 = ['O','o','0'];
+          const G_Il1= ['I','l','1'];
+          const G_S5 = ['S','s','5'];
+
+          if (G_Il1.includes(ch)){
+            let chosen = bestFrom(sym, G_Il1);
+            if (/\d/.test(prev) || /\d/.test(next)) chosen = '1';
+            if (/[A-Z]/.test(prev) && /[a-z]/.test(next)) chosen = 'l';
+            if (medianH){
+              if (h >= medianH*1.06) chosen = 'l';
+              else if (h <= medianH*0.94) chosen = 'I';
+            }
+            ch = chosen;
+          } else if (G_O0.includes(ch)){
+            let chosen = bestFrom(sym, G_O0);
+            if (/\d/.test(prev) || /\d/.test(next)) chosen = '0';
+            ch = chosen;
+          } else if (G_S5.includes(ch)){
+            let chosen = bestFrom(sym, G_S5);
+            if (/\d/.test(prev) || /\d/.test(next)) chosen = '5';
+            ch = chosen;
+          }
+          out += ch;
+        }
+
+        await w.setParameters({
+          save_blob_choices: '0',
+          tessedit_pageseg_mode: 6,
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        return out;
+      }
+
+      // 스테이지드 OCR
       async function ocrWithTesseract(srcOrFile) {
         const w = await getWorker();
-        let res = await w.recognize(srcOrFile);
-        let f = extractFields(res.data.text || '');
 
-        if (!f.voteNo || !f.voteDate || !f.voteTime) {
-          let url = (typeof srcOrFile === 'string') ? srcOrFile : URL.createObjectURL(srcOrFile);
-          const img = new Image(); img.src = url; try { await img.decode(); } catch(_){}
-          if (img.naturalWidth && img.naturalHeight) {
-            const rectBottom = { left: 0, top: Math.floor(img.naturalHeight*0.65), width: img.naturalWidth, height: Math.floor(img.naturalHeight*0.35) };
-            await w.setParameters({ tessedit_pageseg_mode: 7 }); // single line
-            let res2 = await w.recognize(url, { rectangle: rectBottom });
-            const fb = extractFields(res2.data.text || '');
-            if (!f.voteNo)   f.voteNo = fb.voteNo;
-            if (!f.voteDate) f.voteDate = fb.voteDate;
-            if (!f.voteTime) f.voteTime = fb.voteTime;
-            await w.setParameters({ tessedit_pageseg_mode: 6 });
+        // 1) 전체 텍스트 1차 인식
+        const text0 = await recognizeRect(w, srcOrFile, null, {
+          tessedit_pageseg_mode: 6,
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        let f = extractFields(text0);
+
+        // 이미지 크기(ROI 계산용)
+        let url = (typeof srcOrFile === 'string') ? srcOrFile : URL.createObjectURL(srcOrFile);
+        const img = new Image(); img.src = url; try { await img.decode(); } catch(_){}
+        const W = img.naturalWidth || 0, H = img.naturalHeight || 0;
+
+        // 2) 날짜/시간 부족 → 중앙부 라인 전용
+        if ((!f.voteDate || !f.voteTime) && W && H){
+          const midRect = { left: 0, top: Math.floor(H*0.35), width: W, height: Math.floor(H*0.35) };
+          const textMid = await recognizeRect(w, url, midRect, {
+            tessedit_pageseg_mode: 7,
+            tessedit_char_whitelist: DATE_WHITELIST
+          });
+          const fm = extractFields(textMid);
+          if (!f.voteDate) f.voteDate = fm.voteDate;
+          if (!f.voteTime) f.voteTime = fm.voteTime;
+        }
+
+        // 3) 시리얼 부족/짧음 → 하단 라인 전용 앙상블 + choices 보정
+        if ((!f.voteNo || f.voteNo.length < 10) && W && H){
+          const botRect = { left: 0, top: Math.floor(H*0.65), width: W, height: Math.floor(H*0.35) };
+
+          const tries = [];
+          const tChoices = await recognizeSerialWithChoices(w, url, botRect);
+          tries.push(tChoices);
+
+          const t1 = await recognizeRect(w, url, botRect, {
+            tessedit_pageseg_mode: 7,
+            tessedit_char_whitelist: SERIAL_WHITELIST
+          }); tries.push(t1);
+
+          const t2 = await recognizeRect(w, url, botRect, {
+            tessedit_pageseg_mode: 13,
+            tessedit_char_whitelist: SERIAL_WHITELIST
+          }); tries.push(t2);
+
+          const t3 = await recognizeRect(w, url, botRect, {
+            tessedit_pageseg_mode: 11,
+            tessedit_char_whitelist: SERIAL_WHITELIST
+          }); tries.push(t3);
+
+          const candidates = tries
+            .map(normalizeSerial)
+            .filter(x => /No\.?M[-_][A-Za-z0-9_-]{4,}/i.test(x));
+
+          if (candidates.length){
+            candidates.sort((a,b)=>scoreSerial(b)-scoreSerial(a));
+            const best = candidates[0];
+            if (!f.voteNo || scoreSerial(best) > scoreSerial(f.voteNo)) {
+              f.voteNo = best;
+            }
           }
         }
+
         return f;
       }
 
-      // 이미지 붙여넣기 → OCR → 행 누적
+      // ----- 검수 메시지 생성 (날짜별 집계 포함) -----
+      function summarizeForMessage(){
+        if (!currentAssign) return { error: '고유번호를 먼저 입력하세요. 예) AA0001' };
+        if (rows.length === 0) return { error: '테이블에 데이터가 없습니다.' };
+
+        const byDate = {};
+        rows.forEach(r => { if (r.date) byDate[r.date] = (byDate[r.date] || 0) + 1; });
+
+        const dates = Object.keys(byDate).sort((a,b)=>a.localeCompare(b));
+        const parts = dates.map(d => {
+          const mmdd = d.replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3');
+          return `${mmdd} ${byDate[d]}표`;
+        });
+        const dateLine = parts.join(', ');
+
+        const isSingle = dates.length === 1;
+        const singleMMDD = isSingle
+          ? dates[0].replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3')
+          : '';
+
+        return {
+          assignUpper: (currentAssign || '').toUpperCase(),
+          total: rows.length,
+          dateLine,
+          isSingle,
+          singleMMDD
+        };
+      }
+
+      btnAssignAndDone.onclick = function(){
+        const info = summarizeForMessage();
+        if (info.error){ appendMessage('bot', info.error); return; }
+
+        let line3;
+        if (info.isSingle) {
+          line3 = `${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
+        } else {
+          line3 = `${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
+        }
+
+        const msg =
+          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
+          `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
+          line3;
+
+        appendMessage('bot', msg, { plainText: true, copyText: msg });
+      };
+
+      btnDone.onclick = function(){
+        const info = summarizeForMessage();
+        if (info.error){ appendMessage('bot', info.error); return; }
+
+        let line2;
+        if (info.isSingle) {
+          line2 = `${info.assignUpper}님, ${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
+        } else {
+          line2 = `${info.assignUpper}님, ${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
+        }
+
+        const msg =
+          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
+          line2;
+
+        appendMessage('bot', msg, { plainText: true, copyText: msg });
+      };
+
+      // ===== 중복 이미지 감지: 퍼셉추얼 해시(64x64 픽셀 SHA-256) =====
+      async function imagePerceptualHash(file){
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.src = url;
+        await img.decode().catch(()=>{});
+        const w = 64, h = 64;
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        const data = ctx.getImageData(0,0,w,h).data; // RGBA
+        // SHA-256이 있으면 그걸로, 없으면 간단 해시
+        if (crypto && crypto.subtle) {
+          const digest = await crypto.subtle.digest('SHA-256', data);
+          const hex = Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+          return hex;
+        } else {
+          let hash = 0;
+          for (let i=0;i<data.length;i++) hash = (hash*31 + data[i]) >>> 0;
+          return 'fh-' + hash.toString(16);
+        }
+      }
+
+      // 이미지 붙여넣기 → (중복검사) → OCR → 행 누적
       window.addEventListener('paste', async function(e){
         var items = (e.clipboardData && e.clipboardData.items) ? e.clipboardData.items : [];
         for (var i=0;i<items.length;i++) {
           var item = items[i];
           if (item.kind === 'file' && item.type.indexOf('image/') === 0) {
             var file = item.getAsFile();
-            var url = URL.createObjectURL(file);
 
+            // 1) 퍼셉추얼 해시로 중복 검사
+            const ph = await imagePerceptualHash(file);
+            if (seenImageHashes.has(ph)) {
+              appendMessage('bot', '중복된 이미지입니다.');
+              continue;
+            }
+            seenImageHashes.add(ph);
+
+            var url = URL.createObjectURL(file);
             appendMessage('user', '<img src="'+ url +'" class="max-w-xs mt-1 rounded border shadow">');
 
             if (!currentAssign){
