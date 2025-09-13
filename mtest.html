@@ -16,7 +16,7 @@
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-  <h1 class="text-2xl font-bold mb-4">🐱 허씬롱 마갤 자체제작 투표 집계1 시스템(PC)💻 ✅</h1>
+  <h1 class="text-2xl font-bold mb-4">🐱 허씬롱 마갤 자체제작 투표 집계 시스템(PC)💻 ✅</h1>
 
   <!-- 채팅 -->
   <div id="chatbox" class="w-full max-w-xl bg-white p-4 rounded shadow space-y-4 mb-4"></div>
@@ -390,6 +390,79 @@
         return len*5 - amb*2 - rep*3;
       }
 
+      // 후보글자(choices)+글리프 높이로 I / l / 1, O / 0, S / 5 보정
+      async function recognizeSerialWithChoices(w, src, rect){
+        await w.setParameters({
+          tessedit_pageseg_mode: 7, // single line
+          tessedit_char_whitelist: 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+          save_blob_choices: '1'
+        });
+
+        const { data } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
+
+        // 라인 내 대표 높이(모호 문자 제외)
+        const hs = [];
+        (data.symbols || []).forEach(s => {
+          const ch = s.text || '';
+          if (/[A-HJ-RT-Za-hj-rt-z0-9]/.test(ch)) {
+            const bb = s.bbox || s.box || {};
+            const h = (bb.y1 - bb.y0) || 0;
+            if (h) hs.push(h);
+          }
+        });
+        hs.sort((a,b)=>a-b);
+        const medianH = hs.length ? hs[Math.floor(hs.length/2)] : 0;
+
+        function bestFrom(sym, group){
+          if (!sym.choices || !sym.choices.length) return sym.text || '';
+          const cand = sym.choices
+            .filter(c => group.includes(c.text))
+            .sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0];
+          return (cand && cand.text) || (sym.text || '');
+        }
+
+        let out = '';
+        for (let i=0;i<(data.symbols||[]).length;i++){
+          const sym = data.symbols[i];
+          const prev = data.symbols[i-1]?.text || '';
+          const next = data.symbols[i+1]?.text || '';
+          const bb = sym.bbox || sym.box || {};
+          const h  = (bb.y1 - bb.y0) || 0;
+          let ch   = sym.text || '';
+
+          const G_O0 = ['O','o','0'];
+          const G_Il1= ['I','l','1'];
+          const G_S5 = ['S','s','5'];
+
+          if (G_Il1.includes(ch)){
+            let chosen = bestFrom(sym, G_Il1);
+            if (/\d/.test(prev) || /\d/.test(next)) chosen = '1';
+            if (/[A-Z]/.test(prev) && /[a-z]/.test(next)) chosen = 'l';
+            if (medianH){
+              if (h >= medianH*1.06) chosen = 'l';
+              else if (h <= medianH*0.94) chosen = 'I';
+            }
+            ch = chosen;
+          } else if (G_O0.includes(ch)){
+            let chosen = bestFrom(sym, G_O0);
+            if (/\d/.test(prev) || /\d/.test(next)) chosen = '0';
+            ch = chosen;
+          } else if (G_S5.includes(ch)){
+            let chosen = bestFrom(sym, G_S5);
+            if (/\d/.test(prev) || /\d/.test(next)) chosen = '5';
+            ch = chosen;
+          }
+          out += ch;
+        }
+
+        await w.setParameters({
+          save_blob_choices: '0',
+          tessedit_pageseg_mode: 6,
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        return out;
+      }
+
       // 스테이지드 OCR
       async function ocrWithTesseract(srcOrFile) {
         const w = await getWorker();
@@ -418,23 +491,29 @@
           if (!f.voteTime) f.voteTime = fm.voteTime;
         }
 
-        // 3) 시리얼 부족/짧음 → 하단 라인 전용 앙상블(PSM 7/13/11)
+        // 3) 시리얼 부족/짧음 → 하단 라인 전용 앙상블 + choices 보정(I/l/1 강화)
         if ((!f.voteNo || f.voteNo.length < 10) && W && H){
           const botRect = { left: 0, top: Math.floor(H*0.65), width: W, height: Math.floor(H*0.35) };
 
           const tries = [];
+
+          // (a) choices+height 기반 보정
+          const tChoices = await recognizeSerialWithChoices(w, url, botRect);
+          tries.push(tChoices);
+
+          // (b) PSM 7/13/11 기본 앙상블
           const t1 = await recognizeRect(w, url, botRect, {
-            tessedit_pageseg_mode: 7,   // single line
+            tessedit_pageseg_mode: 7,
             tessedit_char_whitelist: SERIAL_WHITELIST
           }); tries.push(t1);
 
           const t2 = await recognizeRect(w, url, botRect, {
-            tessedit_pageseg_mode: 13,  // raw line
+            tessedit_pageseg_mode: 13,
             tessedit_char_whitelist: SERIAL_WHITELIST
           }); tries.push(t2);
 
           const t3 = await recognizeRect(w, url, botRect, {
-            tessedit_pageseg_mode: 11,  // sparse text
+            tessedit_pageseg_mode: 11,
             tessedit_char_whitelist: SERIAL_WHITELIST
           }); tries.push(t3);
 
@@ -480,44 +559,70 @@
         }
       });
 
-      // ----- 검수 메시지 생성 -----
+      // ----- 검수 메시지 생성 (날짜별 집계 포함) -----
       function summarizeForMessage(){
         if (!currentAssign) return { error: '고유번호를 먼저 입력하세요. 예) AA0001' };
         if (rows.length === 0) return { error: '테이블에 데이터가 없습니다.' };
 
-        // 가장 많이 등장한 날짜 선택 → MM.DD로 표시
-        var countByDate = {};
-        rows.forEach(r => { if (r.date) countByDate[r.date] = (countByDate[r.date]||0)+1; });
-        var dates = Object.keys(countByDate);
-        var target = dates[0] || (rows[0]?.date || '');
-        if (dates.length > 1){
-          target = dates.sort(function(a,b){
-            if (countByDate[b] !== countByDate[a]) return countByDate[b]-countByDate[a];
-            return a.localeCompare(b);
-          })[0];
-        }
-        var mmdd = target.replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3');
+        const byDate = {};
+        rows.forEach(r => { if (r.date) byDate[r.date] = (byDate[r.date] || 0) + 1; });
+
+        const dates = Object.keys(byDate).sort((a,b)=>a.localeCompare(b));
+        const parts = dates.map(d => {
+          const mmdd = d.replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3');
+          return `${mmdd} ${byDate[d]}표`;
+        });
+        const dateLine = parts.join(', ');
+
+        const isSingle = dates.length === 1;
+        const singleMMDD = isSingle
+          ? dates[0].replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3')
+          : '';
+
         return {
-          assignUpper: (currentAssign || '').toUpperCase(), // 항상 대문자
-          count: rows.length,
-          mmdd: mmdd || ''
+          assignUpper: (currentAssign || '').toUpperCase(),
+          total: rows.length,
+          dateLine,
+          isSingle,
+          singleMMDD
         };
       }
 
+      // 버튼 핸들러(날짜별 집계 메시지)
       btnAssignAndDone.onclick = function(){
-        var info = summarizeForMessage();
+        const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error); return; }
-        var msg = '씬롱이에게 소중한 투표 감사합니다 ❤\n'
-                + '부여된 고유번호는 ' + info.assignUpper + '입니다.\n'
-                + info.mmdd + ' 총 ' + info.count + '표 집계되었습니다. 감사합니다 😺❤';
+
+        let line3;
+        if (info.isSingle) {
+          line3 = `${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
+        } else {
+          line3 = `${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
+        }
+
+        const msg =
+          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
+          `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
+          line3;
+
         appendMessage('bot', msg, { plainText: true, copyText: msg });
       };
 
       btnDone.onclick = function(){
-        var info = summarizeForMessage();
+        const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error); return; }
-        var msg = '씬롱이에게 소중한 투표 감사합니다 ❤\n'
-                + info.assignUpper + '님, ' + info.mmdd + ' 총 ' + info.count + '표 집계되었습니다. 감사합니다 😺❤';
+
+        let line2;
+        if (info.isSingle) {
+          line2 = `${info.assignUpper}님, ${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
+        } else {
+          line2 = `${info.assignUpper}님, ${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
+        }
+
+        const msg =
+          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
+          line2;
+
         appendMessage('bot', msg, { plainText: true, copyText: msg });
       };
 
