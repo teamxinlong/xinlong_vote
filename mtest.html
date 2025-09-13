@@ -91,7 +91,7 @@
       const btnDone = document.getElementById('btnDone');
 
       let currentAssign = null;
-      const rows = [];                     // { assign, date, time, code }
+      const rows = [];       // { assign, date, time, code }
       let queue = [];
       let processing = false;
       let worker = null;
@@ -273,36 +273,39 @@
         return worker;
       }
 
-      // ⭐ No. 라인 위치를 찾아 그 줄 bbox만 반환(해시태그 차단 핵심)
-      async function locateNoLineRect(w, src, searchRect){
-        await w.setParameters({ tessedit_pageseg_mode: 6, tessedit_char_whitelist: SERIAL_WHITELIST });
-        const { data } = await w.recognize(src, searchRect ? { rectangle: searchRect } : undefined);
-        const lines = data.lines || [];
-        for (const ln of lines){
-          const txt = (ln.text || '').replace(/\s+/g,'');
-          if (/No\.?M[-_]/i.test(txt)){
-            const b = ln.bbox || ln.box;
-            if (b){
-              // 패딩 조금 줘서 재인식
-              const rect = {
-                left: Math.max(0, (searchRect?.left||0) + b.x0 - 20),
-                top:  Math.max(0, (searchRect?.top ||0) + b.y0 - 10),
-                width: (b.x1 - b.x0) + 40,
-                height:(b.y1 - b.y0) + 20
-              };
-              return rect;
-            }
-          }
+      // --- 시리얼라인 전용: 하단을 얇은 슬라이스들로 스캔해 "No." 포함 한 줄만 골라옴
+      async function findNoLineBySlices(w, src, searchRect){
+        const slices = 12; // 얇게 10~14 정도가 안정적
+        const h = Math.max(12, Math.floor(searchRect.height / slices));
+        let best = {score:-1e9, rect:null, text:''};
+
+        for (let i=0;i<slices;i++){
+          const rect = {
+            left: searchRect.left,
+            top:  searchRect.top + i*h,
+            width: searchRect.width,
+            height: (i===slices-1 ? (searchRect.top+searchRect.height - (searchRect.top+i*h)) : h)
+          };
+          const t = await recognizeRect(w, src, rect, { tessedit_pageseg_mode: 7, tessedit_char_whitelist: SERIAL_WHITELIST });
+          const txt = (t||'').replace(/\s+/g,'');
+          // 점수: "No" 포함 + "M-" 포함 + 길이
+          let score = 0;
+          if (/No/i.test(txt)) score += 40;
+          if (/M[-_]/.test(txt)) score += 40;
+          score += Math.min(txt.length, 40);
+          if (score > best.score){ best = {score, rect, text:t}; }
         }
-        return null;
+        return best.score >= 60 ? best : null; // 최소 요건
       }
 
       function normalizeSerial(raw){
         if (!raw) return '';
-        // 1) 줄단위/해시태그 앞에서 컷
+        // 1) 줄 단위/해시태그 비슷해 보이는 토큰 앞에서 컷
         let seg = String(raw);
-        seg = seg.split(/\r?\n/)[0];
-        seg = seg.split('#')[0];
+        seg = seg.split(/\r?\n/)[0];     // 같은 줄만
+        seg = seg.split('#')[0];         // 진짜 #가 잡혔다면 여기서 컷
+        // 해시태그가 HBOYS…처럼 오인식된 경우 대비: 흔한 꼬리 키워드에서 컷
+        seg = seg.replace(/(BOYS2PLANET|GlobalVote|MnetPlus).*$/i, '');
 
         let s = seg.replace(/[–—]/g,'-').replace(/[ˍ﹎＿]/g,'_');
         const m = s.match(/N[o0]\.?\s*M[-_]\s*([A-Za-z0-9_-]{4,})/i) || s.match(/M[-_]\s*([A-Za-z0-9_-]{4,})/i);
@@ -312,7 +315,8 @@
              .replace(/([A-Za-z0-9])[lI]([A-Za-z0-9])/g,'$11$2')
              .replace(/([A-Za-z0-9])[Ss]([A-Za-z0-9])/g,'$15$2')
              .replace(/[^A-Za-z0-9_-]/g,'');
-        if (s.length > 64) s = s.slice(0,64);   // 과도한 꼬리 방지
+        // 비정상적으로 길면 자르기(해시태그 꼬리 제거 최후의 보루)
+        if (s.length > 40) s = s.slice(0, 40);
         if (s.length < 4) return '';
         return 'No.M-' + s;
       }
@@ -322,69 +326,6 @@
         const amb = (s.match(/[OSIl]/g)||[]).length;
         const rep = (s.match(/__|--/g)||[]).length;
         return len*5 - amb*2 - rep*3;
-      }
-
-      async function recognizeSerialWithChoices(w, src, rect){
-        await w.setParameters({
-          tessedit_pageseg_mode: 7,
-          tessedit_char_whitelist: 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
-          save_blob_choices: '1'
-        });
-        const { data } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
-
-        const hs = [];
-        (data.symbols || []).forEach(s => {
-          const ch = s.text || '';
-          if (/[A-HJ-RT-Za-hj-rt-z0-9]/.test(ch)) {
-            const bb = s.bbox || s.box || {};
-            const h = (bb.y1 - bb.y0) || 0;
-            if (h) hs.push(h);
-          }
-        });
-        hs.sort((a,b)=>a-b);
-        const medianH = hs.length ? hs[Math.floor(hs.length/2)] : 0;
-
-        function bestFrom(sym, group){
-          if (!sym.choices || !sym.choices.length) return sym.text || '';
-          const cand = sym.choices.filter(c => group.includes(c.text))
-                                  .sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0];
-          return (cand && cand.text) || (sym.text || '');
-        }
-
-        let out = '';
-        for (let i=0;i<(data.symbols||[]).length;i++){
-          const sym = data.symbols[i];
-          const prev = data.symbols[i-1]?.text || '';
-          const next = data.symbols[i+1]?.text || '';
-          const bb = sym.bbox || sym.box || {};
-          const h  = (bb.y1 - bb.y0) || 0;
-          let ch   = sym.text || '';
-
-          const G_O0 = ['O','o','0'];
-          const G_Il1= ['I','l','1'];
-          const G_S5 = ['S','s','5'];
-
-          if (G_Il1.includes(ch)){
-            let chosen = bestFrom(sym, G_Il1);
-            if (/\d/.test(prev) || /\d/.test(next)) chosen = '1';
-            if (/[A-Z]/.test(prev) && /[a-z]/.test(next)) chosen = 'l';
-            if (medianH){ if (h >= medianH*1.06) chosen = 'l'; else if (h <= medianH*0.94) chosen = 'I'; }
-            ch = chosen;
-          } else if (G_O0.includes(ch)){
-            let chosen = bestFrom(sym, G_O0);
-            if (/\d/.test(prev) || /\d/.test(next)) chosen = '0';
-            ch = chosen;
-          } else if (G_S5.includes(ch)){
-            let chosen = bestFrom(sym, G_S5);
-            if (/\d/.test(prev) || /\d/.test(next)) chosen = '5';
-            ch = chosen;
-          }
-          out += ch;
-        }
-
-        await w.setParameters({ save_blob_choices: '0', tessedit_pageseg_mode: 6,
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./' });
-        return out;
       }
 
       async function getOCR(file){
@@ -408,14 +349,14 @@
           if (!f.voteTime) f.voteTime = fm.voteTime;
         }
 
-        // 시리얼: 하단 30%에서 No. 라인 위치를 먼저 찾고 그 줄만 재인식
+        // 시리얼: 하단 30%에서 얇은 슬라이스 스캔 → No. 들어간 한 줄만 재인식
         if ((!f.voteNo || f.voteNo.length < 10) && W && H){
           const searchRect = { left: 0, top: Math.floor(H*0.70), width: W, height: Math.floor(H*0.28) };
-          const lineRect = await locateNoLineRect(w, url, searchRect);
-          const targetRect = lineRect || searchRect;
+          const picked = await findNoLineBySlices(w, url, searchRect);
+          const targetRect = picked?.rect || searchRect;
 
           const tries = [];
-          const tChoices = await recognizeSerialWithChoices(w, url, targetRect); tries.push(tChoices);
+          if (picked?.text) tries.push(picked.text);
           const t1 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode:7,  tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t1);
           const t2 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode:13, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t2);
           const t3 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode:11, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t3);
