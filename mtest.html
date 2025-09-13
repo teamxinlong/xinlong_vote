@@ -20,7 +20,7 @@
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-  <h1 class="text-xl sm:text-2xl font-bold mb-3">🐱 허씬롱 마갤 자체제작 투표 집계 시스템1(모바일)📱 ✅</h1>
+  <h1 class="text-xl sm:text-2xl font-bold mb-3">🐱 허씬롱 마갤 자체제작 투표 집계 시스템(모바일)📱 ✅</h1>
 
   <!-- 채팅 -->
   <div id="chatbox" class="w-full max-w-md bg-white p-3 rounded shadow space-y-3 mb-3"></div>
@@ -101,8 +101,8 @@
       let worker = null;
       const seenImageHashes = new Set();     // 중복 이미지 체크
 
+      // ---- UI 유틸
       function setStatus(txt){ statusEl.textContent = txt; }
-
       async function copyToClipboard(text){
         try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } } catch(_){}
         const ta = document.createElement('textarea');
@@ -111,7 +111,6 @@
         let ok=false; try{ ok=document.execCommand('copy'); }catch(_){}
         document.body.removeChild(ta); return ok;
       }
-
       function appendMessage(sender, html, {plainText=false, copyText=null}={}){
         const msg = document.createElement('div');
         msg.className = sender==='user' ? 'text-left' : 'text-right';
@@ -135,6 +134,7 @@
         msg.appendChild(wrap); chatbox.appendChild(msg); chatbox.scrollTop=chatbox.scrollHeight;
       }
 
+      // ---- 상태/테이블
       function parseAssign(text){
         const s=(text||'').trim();
         return /^[A-Za-z]{2}\d{4}$/.test(s) ? s.toUpperCase() : null;
@@ -174,7 +174,7 @@
         setTimeout(()=>copyAllBtn.textContent=old,1500);
       };
 
-      // ===== 전처리 & 파서 =====
+      // ---- OCR 전처리/파서
       function toHalfwidth(str){
         return str.replace(/[\uFF01-\uFF5E]/g, ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/\u3000/g,' ');
       }
@@ -206,50 +206,70 @@
         const time = tm ? `${String(tm[1]).padStart(2,'0')}:${tm[2]}` : '';
         return { date, time };
       }
+
+      // ⬇⬇⬇ 문제된 부분 대수술: 시리얼 라인 정제/탐색
       function normalizeSerialFromLine(line){
         if (!line) return '';
-        let seg = String(line).split('#')[0]
-          .replace(/(BOYS2PLANET|GlobalVote|MnetPlus|이미지\s*저장|투표인증서를).*$/i, '');
+        let seg = String(line);
+
         seg = seg.replace(/[–—]/g,'-').replace(/[ˍ﹎＿]/g,'_');
-        const m = seg.match(/N[o0]\.?\s*M[-_]\s*([A-Za-z0-9_\-\s]{3,})/i) || seg.match(/M[-_]\s*([A-Za-z0-9_\-\s]{3,})/i);
+        // 꼬리 문구/해시태그를 먼저 잘라낸다
+        seg = seg.replace(/#.*$/g,'');
+        seg = seg.replace(/(BOYS?2?PLANET|PLANET|GlobalVote|GLOBAL\s*VOTE|Mnet\s*Plus|MnetPlus|이미지\s*저장|투표인증서[를은]?|Share).*$/i, '');
+
+        // No. M- 또는 M- 패턴에서 허용문자 연속 캡처
+        const m = seg.match(/(?:N[o0]\.?\s*)?M[-_]\s*([A-Za-z0-9_\-]{6,})/i);
         if (!m) return '';
+
         let s = m[1];
+
+        // 만약 중간에 PLANET/VOTE 등 꼬리 텍스트가 붙었다면 그 지점에서 컷
+        const cutTail = s.search(/(PLANET|VOTE|GLOBAL|MNET|PLUS)/i);
+        if (cutTail > 0) s = s.slice(0, cutTail);
+
+        // 공백 제거 + 흔한 오인식 보정 + 허용외 제거
         s = s.replace(/\s+/g,'')
              .replace(/([A-Za-z0-9])[Oo]([A-Za-z0-9])/g,'$10$2')
              .replace(/([A-Za-z0-9])[lI]([A-Za-z0-9])/g,'$11$2')
              .replace(/([A-Za-z0-9])[Ss]([A-Za-z0-9])/g,'$15$2')
              .replace(/[^A-Za-z0-9_-]/g,'');
-        if (s.length > 64) s = s.slice(0,64);
-        if (s.length < 4) return '';
+
+        // 너무 길면 안전 컷(언더바 경계 우선), 너무 짧으면 무효
+        if (s.length > 44){
+          const firstUnderscoreAfter18 = s.indexOf('_', 18);
+          if (firstUnderscoreAfter18 > 0) s = s.slice(0, firstUnderscoreAfter18);
+          if (s.length > 44) s = s.slice(0, 44);
+        }
+        if (s.length < 6) return '';
+
         return 'No.M-' + s;
       }
+
       function pickSerialFromText(text){
         if (!text) return '';
         const lines = String(text).split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
 
-        // a) 아래쪽부터 최대 4줄 묶어 탐색 (No./M- 가 서로 다른 줄에 있을 때 포함)
+        // a) 아래쪽에서 6줄 윈도우까지 묶어서 탐색 (분절 대응)
         for (let i = lines.length - 1; i >= 0; i--) {
-          if (/No\b|No\.|M[-_]/i.test(lines[i])) {
+          if (/(?:^| )No\b|No\.|M[-_]/i.test(lines[i])) {
             let win = [];
-            if (i-1 >= 0) win.push(lines[i-1]);
-            win.push(lines[i]);
-            if (i+1 < lines.length) win.push(lines[i+1]);
-            if (i+2 < lines.length) win.push(lines[i+2]);
+            for (let k=-2;k<=3;k++) if (i+k>=0 && i+k<lines.length) win.push(lines[i+k]);
             const sn = normalizeSerialFromLine(win.join(' '));
             if (sn) return sn;
           }
         }
-        // b) 맨 아래 5줄 통짜
-        const tail = lines.slice(-5).join(' ');
-        let sn = normalizeSerialFromLine(tail);
+
+        // b) 맨 아래 40% 통짜 텍스트에서 탐색(두 번째 백업)
+        const tail40 = lines.slice(Math.floor(lines.length*0.6)).join(' ');
+        let sn = normalizeSerialFromLine(tail40);
         if (sn) return sn;
 
-        // c) 전체 통짜에서 한번 더
-        sn = normalizeSerialFromLine(lines.join(' '));
-        return sn;
+        // c) 전체에서 최후 탐색
+        return normalizeSerialFromLine(lines.join(' '));
       }
+      // ⬆⬆⬆ 시리얼 로직 변경 끝
 
-      // ===== 이미지 전처리(리사이즈+그레이스케일+콘트라스트) =====
+      // ---- 이미지 전처리
       function preprocessImage(file){
         return new Promise(resolve=>{
           const url = URL.createObjectURL(file);
@@ -270,19 +290,7 @@
         });
       }
 
-      // ===== Tesseract 래퍼 =====
-      async function recognizeText(w, src, rect, params){
-        if (params?.tessedit_pageseg_mode != null)
-          await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
-        if (params?.tessedit_char_whitelist)
-          await w.setParameters({ tessedit_char_whitelist: params.tessedit_char_whitelist });
-        const { data:{ text } } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
-        await w.setParameters({
-          tessedit_pageseg_mode: 6,
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
-        });
-        return text || '';
-      }
+      // ---- Tesseract 래퍼
       async function getWorker(){
         if (worker) return worker;
         worker = await Tesseract.createWorker();
@@ -299,8 +307,20 @@
         });
         return worker;
       }
+      async function recognizeText(w, src, rect, params){
+        if (params?.tessedit_pageseg_mode != null)
+          await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
+        if (params?.tessedit_char_whitelist)
+          await w.setParameters({ tessedit_char_whitelist: params.tessedit_char_whitelist });
+        const { data:{ text } } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
+        await w.setParameters({
+          tessedit_pageseg_mode: 6,
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        return text || '';
+      }
 
-      // ===== OCR (전체 1회 + 하단 시리얼 보강 + 날짜/시간 ROI 보강) =====
+      // ---- OCR 전체 + ROI 재시도
       async function getOCR(file){
         const { url, W, H } = await preprocessImage(file);
         const w = await getWorker();
@@ -310,15 +330,18 @@
         let { date: voteDate, time: voteTime } = parseDateTime(tAll);
         let voteNo = pickSerialFromText(tAll);
 
-        // 2) 시리얼 실패 → 하단 30%
+        // 2) 시리얼 보강: 하단 30% -> 35% -> 40%
         if ((!voteNo || voteNo.length < 8) && W && H){
-          const rect = { left: 0, top: Math.floor(H*0.70), width: W, height: Math.floor(H*0.28) };
-          const tBottom = await recognizeText(w, url, rect, { tessedit_pageseg_mode: 6 });
-          const sn = pickSerialFromText(tBottom);
-          if (sn) voteNo = sn;
+          const percents = [0.70, 0.65, 0.60];
+          for (const topP of percents){
+            const rect = { left: 0, top: Math.floor(H*topP), width: W, height: Math.floor(H*(0.98-topP)) };
+            const tBottom = await recognizeText(w, url, rect, { tessedit_pageseg_mode: 6 });
+            const sn = pickSerialFromText(tBottom);
+            if (sn){ voteNo = sn; break; }
+          }
         }
 
-        // 3) 시간은 항상 우하단 ROI로 덮어쓰기(상태바 오검출 방지)
+        // 3) 시간은 우하단 ROI로 한번 더(상태바 시계 방지)
         if (W && H){
           const rectRT = { left: Math.floor(W*0.45), top: Math.floor(H*0.55), width: Math.floor(W*0.50), height: Math.floor(H*0.25) };
           const tRT = await recognizeText(w, url, rectRT, { tessedit_pageseg_mode: 6 });
@@ -326,7 +349,7 @@
           if (tfix) voteTime = tfix;
         }
 
-        // 4) 날짜가 없으면 하단 중앙 ROI
+        // 4) 날짜가 없으면 하단 중앙 ROI 재시도
         if (!voteDate && W && H){
           const rectDate = { left: Math.floor(W*0.20), top: Math.floor(H*0.52), width: Math.floor(W*0.60), height: Math.floor(H*0.20) };
           const tMid = await recognizeText(w, url, rectDate, { tessedit_pageseg_mode: 6 });
@@ -337,7 +360,7 @@
         return { voteDate: voteDate || '', voteTime: voteTime || '', voteNo: voteNo || '' };
       }
 
-      // ===== 메시지(날짜별 집계) =====
+      // ---- 메시지(날짜별 집계)
       function summarizeForMessage(){
         if (!currentAssign) return { error: '고유번호를 먼저 입력하세요. 예) AA0001' };
         if (rows.length === 0) return { error: '테이블에 데이터가 없습니다.' };
@@ -367,7 +390,7 @@
         appendMessage('bot', msg, { plainText:true, copyText: msg });
       };
 
-      // ===== 중복 이미지(퍼셉추얼 해시) =====
+      // ---- 중복 이미지(퍼셉추얼 해시)
       async function imagePerceptualHash(file){
         const url = URL.createObjectURL(file);
         const img = new Image(); img.src = url; await img.decode().catch(()=>{});
@@ -384,7 +407,7 @@
         }
       }
 
-      // ===== 큐 처리 =====
+      // ---- 큐 처리
       async function drainQueue(){
         if (processing) return;
         processing = true; setStatus(`처리 중 (${queue.length}장 대기)`);
@@ -414,7 +437,7 @@
         setStatus('대기 중'); processing = false;
       }
 
-      // ===== 이벤트 =====
+      // ---- 이벤트
       assignBtn.onclick = ()=>{
         const s = assignInput.value.trim();
         appendMessage('user', s);
