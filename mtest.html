@@ -20,7 +20,7 @@
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-  <h1 class="text-xl sm:text-2xl font-bold mb-3">🐱 허씬롱 마갤 자체제작 투표 집계1 시스템(모바일)📱 ✅</h1>
+  <h1 class="text-xl sm:text-2xl font-bold mb-3">🐱 허씬롱 마갤 자체제작 투표 집계 시스템(모바일)📱 ✅</h1>
 
   <div id="chatbox" class="w-full max-w-md bg-white p-3 rounded shadow space-y-3 mb-3"></div>
 
@@ -248,12 +248,12 @@
       async function recognizeRect(w, src, rect, params){
         if (params?.tessedit_pageseg_mode != null) await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
         if (params?.tessedit_char_whitelist) await w.setParameters({ tessedit_char_whitelist: params.tessedit_char_whitelist });
-        const { data:{ text } } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
+        const { data } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
         await w.setParameters({
           tessedit_pageseg_mode: 6,
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
         });
-        return text || '';
+        return data;
       }
 
       async function getWorker(){
@@ -273,39 +273,48 @@
         return worker;
       }
 
-      // --- 시리얼라인 전용: 하단을 얇은 슬라이스들로 스캔해 "No." 포함 한 줄만 골라옴
-      async function findNoLineBySlices(w, src, searchRect){
-        const slices = 12; // 얇게 10~14 정도가 안정적
-        const h = Math.max(12, Math.floor(searchRect.height / slices));
-        let best = {score:-1e9, rect:null, text:''};
+      // --- 하단 30% 안에서 words bbox로 No. 시작 줄만 "얇게" 캡처
+      async function locateSerialTightRect(w, src, searchRect){
+        // 1) 단어 단위로 거칠게 스캔
+        await w.setParameters({ tessedit_pageseg_mode: 6, tessedit_char_whitelist: SERIAL_WHITELIST });
+        const { data } = await w.recognize(src, { rectangle: searchRect });
+        const words = data.words || [];
 
-        for (let i=0;i<slices;i++){
-          const rect = {
-            left: searchRect.left,
-            top:  searchRect.top + i*h,
-            width: searchRect.width,
-            height: (i===slices-1 ? (searchRect.top+searchRect.height - (searchRect.top+i*h)) : h)
-          };
-          const t = await recognizeRect(w, src, rect, { tessedit_pageseg_mode: 7, tessedit_char_whitelist: SERIAL_WHITELIST });
-          const txt = (t||'').replace(/\s+/g,'');
-          // 점수: "No" 포함 + "M-" 포함 + 길이
-          let score = 0;
-          if (/No/i.test(txt)) score += 40;
-          if (/M[-_]/.test(txt)) score += 40;
-          score += Math.min(txt.length, 40);
-          if (score > best.score){ best = {score, rect, text:t}; }
+        // 2) 시작 단어(idxStart) 찾기: "No." / "No" / "No.M-" / "M-"
+        let idxStart = -1;
+        for (let i=0;i<words.length;i++){
+          const t = (words[i].text || '').replace(/\s+/g,'');
+          if (/^No\.?$/i.test(t) || /^No\.?M[-_]/i.test(t) || /^M[-_]/.test(t)) { idxStart = i; break; }
         }
-        return best.score >= 60 ? best : null; // 최소 요건
+        if (idxStart < 0) return null;
+
+        // 3) 오른쪽으로 6~10 단어만 묶기(해시태그 줄 포함 방지)
+        let idxEnd = Math.min(words.length-1, idxStart + 8);
+
+        // 4) bbox 합치기
+        const padX = 12, padY = 8;
+        let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+        for (let i=idxStart;i<=idxEnd;i++){
+          const b = words[i].bbox || words[i].box;
+          if (!b) continue;
+          x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0);
+          x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1);
+        }
+        if (x1 < 0) return null;
+
+        return {
+          left:  (searchRect.left||0) + Math.max(0, x0 - padX),
+          top:   (searchRect.top ||0) + Math.max(0, y0 - padY),
+          width: (x1 - x0) + padX*2,
+          height:(y1 - y0) + padY*2
+        };
       }
 
       function normalizeSerial(raw){
         if (!raw) return '';
-        // 1) 줄 단위/해시태그 비슷해 보이는 토큰 앞에서 컷
-        let seg = String(raw);
-        seg = seg.split(/\r?\n/)[0];     // 같은 줄만
-        seg = seg.split('#')[0];         // 진짜 #가 잡혔다면 여기서 컷
-        // 해시태그가 HBOYS…처럼 오인식된 경우 대비: 흔한 꼬리 키워드에서 컷
-        seg = seg.replace(/(BOYS2PLANET|GlobalVote|MnetPlus).*$/i, '');
+        // 같은 줄만 + 해시태그/홍보문구 컷
+        let seg = String(raw).split(/\r?\n/)[0];
+        seg = seg.split('#')[0].replace(/(BOYS2PLANET|GlobalVote|MnetPlus).*$/i, '');
 
         let s = seg.replace(/[–—]/g,'-').replace(/[ˍ﹎＿]/g,'_');
         const m = s.match(/N[o0]\.?\s*M[-_]\s*([A-Za-z0-9_-]{4,})/i) || s.match(/M[-_]\s*([A-Za-z0-9_-]{4,})/i);
@@ -315,11 +324,11 @@
              .replace(/([A-Za-z0-9])[lI]([A-Za-z0-9])/g,'$11$2')
              .replace(/([A-Za-z0-9])[Ss]([A-Za-z0-9])/g,'$15$2')
              .replace(/[^A-Za-z0-9_-]/g,'');
-        // 비정상적으로 길면 자르기(해시태그 꼬리 제거 최후의 보루)
         if (s.length > 40) s = s.slice(0, 40);
         if (s.length < 4) return '';
         return 'No.M-' + s;
       }
+
       function scoreSerial(s){
         if (!s) return -1e9;
         const len = s.length;
@@ -330,36 +339,38 @@
 
       async function getOCR(file){
         const w = await getWorker();
-        const text0 = await recognizeRect(w, file, null, {
-          tessedit_pageseg_mode: 6,
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
-        });
-        let f = extractFields(text0);
 
+        // 0) 전체 텍스트 1회
+        let { text: t0 } = await (async () => {
+          const { data } = await recognizeRect(w, file, null, { tessedit_pageseg_mode: 6 });
+          return { text: data.text || '' };
+        })();
+        let f = extractFields(t0 || '');
+
+        // 1) 중앙 25~70%에서 날짜/시간 보강
         const url = URL.createObjectURL(file);
         const img = new Image(); img.src=url; try{ await img.decode(); }catch(_){}
         const W = img.naturalWidth || 0, H = img.naturalHeight || 0;
 
-        // 날짜/시간: 상단 UI 제거 → 중앙 25%~70%만
         if ((!f.voteDate || !f.voteTime) && W && H){
           const midRect = { left: 0, top: Math.floor(H*0.25), width: W, height: Math.floor(H*0.45) };
-          const textMid = await recognizeRect(w, url, midRect, { tessedit_pageseg_mode: 7, tessedit_char_whitelist: DATE_WHITELIST });
-          const fm = extractFields(textMid);
+          const { data } = await recognizeRect(w, url, midRect, { tessedit_pageseg_mode: 7, tessedit_char_whitelist: DATE_WHITELIST });
+          const fm = extractFields(data.text || '');
           if (!f.voteDate) f.voteDate = fm.voteDate;
           if (!f.voteTime) f.voteTime = fm.voteTime;
         }
 
-        // 시리얼: 하단 30%에서 얇은 슬라이스 스캔 → No. 들어간 한 줄만 재인식
+        // 2) 하단 30%에서 "단어기반 얇은 박스"만 재인식 → 꼬리 제거
         if ((!f.voteNo || f.voteNo.length < 10) && W && H){
           const searchRect = { left: 0, top: Math.floor(H*0.70), width: W, height: Math.floor(H*0.28) };
-          const picked = await findNoLineBySlices(w, url, searchRect);
-          const targetRect = picked?.rect || searchRect;
+          const tightRect = await locateSerialTightRect(w, url, searchRect);
+          const targetRect = tightRect || searchRect;
 
+          // 세 가지 PSM 시도
           const tries = [];
-          if (picked?.text) tries.push(picked.text);
-          const t1 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode:7,  tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t1);
-          const t2 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode:13, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t2);
-          const t3 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode:11, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t3);
+          const d1 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode: 7,  tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(d1.text||'');
+          const d2 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode: 13, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(d2.text||'');
+          const d3 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode: 11, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(d3.text||'');
 
           const candidates = tries.map(normalizeSerial).filter(x => /No\.?M[-_][A-Za-z0-9_-]{4,}/i.test(x));
           if (candidates.length){
