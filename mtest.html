@@ -208,12 +208,12 @@
       }
       function normalizeSerialFromLine(line){
         if (!line) return '';
-        let seg = String(line).split('#')[0].replace(/(BOYS2PLANET|GlobalVote|MnetPlus).*$/i, '');
+        let seg = String(line).split('#')[0]
+          .replace(/(BOYS2PLANET|GlobalVote|MnetPlus|이미지\s*저장|투표인증서를).*$/i, '');
         seg = seg.replace(/[–—]/g,'-').replace(/[ˍ﹎＿]/g,'_');
-        const m = seg.match(/N[o0]\.?\s*M[-_]\s*([A-Za-z0-9_-]{3,})/i) || seg.match(/M[-_]\s*([A-Za-z0-9_-]{3,})/i);
+        const m = seg.match(/N[o0]\.?\s*M[-_]\s*([A-Za-z0-9_\-\s]{3,})/i) || seg.match(/M[-_]\s*([A-Za-z0-9_\-\s]{3,})/i);
         if (!m) return '';
         let s = m[1];
-        // 아래 줄들이 이어진 케이스 대비: 남은 텍스트 붙여도 허용문자만 유지
         s = s.replace(/\s+/g,'')
              .replace(/([A-Za-z0-9])[Oo]([A-Za-z0-9])/g,'$10$2')
              .replace(/([A-Za-z0-9])[lI]([A-Za-z0-9])/g,'$11$2')
@@ -226,18 +226,27 @@
       function pickSerialFromText(text){
         if (!text) return '';
         const lines = String(text).split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-        for (let i=lines.length-1; i>=0; i--){
-          const L = lines[i];
-          if (/No\.?/i.test(L) || /M[-_]/.test(L)){
-            // 줄 나눠짐 보정: 아래 2줄 더 이어붙여서 파싱
-            let cat = L;
-            if (i+1<lines.length) cat += ' ' + lines[i+1];
-            if (i+2<lines.length) cat += ' ' + lines[i+2];
-            const sn = normalizeSerialFromLine(cat);
+
+        // a) 아래쪽부터 최대 4줄 묶어 탐색 (No./M- 가 서로 다른 줄에 있을 때 포함)
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (/No\b|No\.|M[-_]/i.test(lines[i])) {
+            let win = [];
+            if (i-1 >= 0) win.push(lines[i-1]);
+            win.push(lines[i]);
+            if (i+1 < lines.length) win.push(lines[i+1]);
+            if (i+2 < lines.length) win.push(lines[i+2]);
+            const sn = normalizeSerialFromLine(win.join(' '));
             if (sn) return sn;
           }
         }
-        return '';
+        // b) 맨 아래 5줄 통짜
+        const tail = lines.slice(-5).join(' ');
+        let sn = normalizeSerialFromLine(tail);
+        if (sn) return sn;
+
+        // c) 전체 통짜에서 한번 더
+        sn = normalizeSerialFromLine(lines.join(' '));
+        return sn;
       }
 
       // ===== 이미지 전처리(리사이즈+그레이스케일+콘트라스트) =====
@@ -246,14 +255,12 @@
           const url = URL.createObjectURL(file);
           const img = new Image();
           img.onload = ()=>{
-            // 리사이즈: 긴 변 1600px
             const maxSide = 1600;
             let { naturalWidth:W, naturalHeight:H } = img;
             const scale = Math.min(1, maxSide / Math.max(W,H));
             W = Math.max(1, Math.round(W*scale)); H = Math.max(1, Math.round(H*scale));
             const c = document.createElement('canvas'); c.width = W; c.height = H;
             const ctx = c.getContext('2d', { willReadFrequently: true });
-            // iOS에서도 동작하는 기본 필터 조합
             try { ctx.filter = 'grayscale(1) contrast(1.25) brightness(1.05)'; } catch(_) {}
             ctx.drawImage(img, 0, 0, W, H);
             resolve({ url: c.toDataURL('image/png'), W, H });
@@ -293,7 +300,7 @@
         return worker;
       }
 
-      // ===== OCR (전체 1회 + 하단 보강 1회, 날짜 있으면 우하단 보강 1회) =====
+      // ===== OCR (전체 1회 + 하단 시리얼 보강 + 날짜/시간 ROI 보강) =====
       async function getOCR(file){
         const { url, W, H } = await preprocessImage(file);
         const w = await getWorker();
@@ -311,18 +318,26 @@
           if (sn) voteNo = sn;
         }
 
-        // 3) 날짜만 있고 시간이 빈약 → 우하단 보강(오른쪽 45% × 아래쪽 45%)
-        if (voteDate && (!voteTime || voteTime.length<4) && W && H){
+        // 3) 시간은 항상 우하단 ROI로 덮어쓰기(상태바 오검출 방지)
+        if (W && H){
           const rectRT = { left: Math.floor(W*0.45), top: Math.floor(H*0.55), width: Math.floor(W*0.50), height: Math.floor(H*0.25) };
           const tRT = await recognizeText(w, url, rectRT, { tessedit_pageseg_mode: 6 });
           const tfix = parseDateTime(tRT).time;
           if (tfix) voteTime = tfix;
         }
 
+        // 4) 날짜가 없으면 하단 중앙 ROI
+        if (!voteDate && W && H){
+          const rectDate = { left: Math.floor(W*0.20), top: Math.floor(H*0.52), width: Math.floor(W*0.60), height: Math.floor(H*0.20) };
+          const tMid = await recognizeText(w, url, rectDate, { tessedit_pageseg_mode: 6 });
+          const dfix = parseDateTime(tMid).date;
+          if (dfix) voteDate = dfix;
+        }
+
         return { voteDate: voteDate || '', voteTime: voteTime || '', voteNo: voteNo || '' };
       }
 
-      // ===== 버튼 메시지(날짜별 집계 포함) =====
+      // ===== 메시지(날짜별 집계) =====
       function summarizeForMessage(){
         if (!currentAssign) return { error: '고유번호를 먼저 입력하세요. 예) AA0001' };
         if (rows.length === 0) return { error: '테이블에 데이터가 없습니다.' };
