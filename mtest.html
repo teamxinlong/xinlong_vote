@@ -245,15 +245,16 @@
       const DATE_WHITELIST   = '0123456789:. -/KST년월일시hH';
       const SERIAL_WHITELIST = 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-      async function recognizeRect(w, src, rect, params){
+      // 텍스트만 돌려주는 안전 래퍼
+      async function recognizeText(w, src, rect, params){
         if (params?.tessedit_pageseg_mode != null) await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
         if (params?.tessedit_char_whitelist) await w.setParameters({ tessedit_char_whitelist: params.tessedit_char_whitelist });
-        const { data } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
+        const { data:{ text } } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
         await w.setParameters({
           tessedit_pageseg_mode: 6,
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
         });
-        return data;
+        return text || '';
       }
 
       async function getWorker(){
@@ -273,14 +274,12 @@
         return worker;
       }
 
-      // --- 하단 30% 안에서 words bbox로 No. 시작 줄만 "얇게" 캡처
+      // 하단 30% 안에서 words bbox로 No. 시작 줄만 "얇게" 캡처
       async function locateSerialTightRect(w, src, searchRect){
-        // 1) 단어 단위로 거칠게 스캔
         await w.setParameters({ tessedit_pageseg_mode: 6, tessedit_char_whitelist: SERIAL_WHITELIST });
         const { data } = await w.recognize(src, { rectangle: searchRect });
         const words = data.words || [];
 
-        // 2) 시작 단어(idxStart) 찾기: "No." / "No" / "No.M-" / "M-"
         let idxStart = -1;
         for (let i=0;i<words.length;i++){
           const t = (words[i].text || '').replace(/\s+/g,'');
@@ -288,10 +287,8 @@
         }
         if (idxStart < 0) return null;
 
-        // 3) 오른쪽으로 6~10 단어만 묶기(해시태그 줄 포함 방지)
         let idxEnd = Math.min(words.length-1, idxStart + 8);
 
-        // 4) bbox 합치기
         const padX = 12, padY = 8;
         let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
         for (let i=idxStart;i<=idxEnd;i++){
@@ -312,7 +309,6 @@
 
       function normalizeSerial(raw){
         if (!raw) return '';
-        // 같은 줄만 + 해시태그/홍보문구 컷
         let seg = String(raw).split(/\r?\n/)[0];
         seg = seg.split('#')[0].replace(/(BOYS2PLANET|GlobalVote|MnetPlus).*$/i, '');
 
@@ -328,7 +324,6 @@
         if (s.length < 4) return '';
         return 'No.M-' + s;
       }
-
       function scoreSerial(s){
         if (!s) return -1e9;
         const len = s.length;
@@ -341,10 +336,7 @@
         const w = await getWorker();
 
         // 0) 전체 텍스트 1회
-        let { text: t0 } = await (async () => {
-          const { data } = await recognizeRect(w, file, null, { tessedit_pageseg_mode: 6 });
-          return { text: data.text || '' };
-        })();
+        const t0 = await recognizeText(w, file, null, { tessedit_pageseg_mode: 6 });
         let f = extractFields(t0 || '');
 
         // 1) 중앙 25~70%에서 날짜/시간 보강
@@ -354,8 +346,8 @@
 
         if ((!f.voteDate || !f.voteTime) && W && H){
           const midRect = { left: 0, top: Math.floor(H*0.25), width: W, height: Math.floor(H*0.45) };
-          const { data } = await recognizeRect(w, url, midRect, { tessedit_pageseg_mode: 7, tessedit_char_whitelist: DATE_WHITELIST });
-          const fm = extractFields(data.text || '');
+          const tMid = await recognizeText(w, url, midRect, { tessedit_pageseg_mode: 7, tessedit_char_whitelist: DATE_WHITELIST });
+          const fm = extractFields(tMid || '');
           if (!f.voteDate) f.voteDate = fm.voteDate;
           if (!f.voteTime) f.voteTime = fm.voteTime;
         }
@@ -366,11 +358,10 @@
           const tightRect = await locateSerialTightRect(w, url, searchRect);
           const targetRect = tightRect || searchRect;
 
-          // 세 가지 PSM 시도
           const tries = [];
-          const d1 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode: 7,  tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(d1.text||'');
-          const d2 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode: 13, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(d2.text||'');
-          const d3 = await recognizeRect(w, url, targetRect, { tessedit_pageseg_mode: 11, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(d3.text||'');
+          tries.push(await recognizeText(w, url, targetRect, { tessedit_pageseg_mode: 7,  tessedit_char_whitelist: SERIAL_WHITELIST }));
+          tries.push(await recognizeText(w, url, targetRect, { tessedit_pageseg_mode: 13, tessedit_char_whitelist: SERIAL_WHITELIST }));
+          tries.push(await recognizeText(w, url, targetRect, { tessedit_pageseg_mode: 11, tessedit_char_whitelist: SERIAL_WHITELIST }));
 
           const candidates = tries.map(normalizeSerial).filter(x => /No\.?M[-_][A-Za-z0-9_-]{4,}/i.test(x));
           if (candidates.length){
@@ -434,22 +425,26 @@
         processing = true; setStatus(`처리 중 (${queue.length}장 대기)`);
         while(queue.length){
           const file = queue.shift();
-          setStatus(`처리 중… (남은 ${queue.length}장)`);
+          try{
+            setStatus(`처리 중… (남은 ${queue.length}장)`);
 
-          const ph = await imagePerceptualHash(file);
-          if (seenImageHashes.has(ph)) { appendMessage('bot','중복된 이미지입니다.'); continue; }
-          seenImageHashes.add(ph);
+            const ph = await imagePerceptualHash(file);
+            if (seenImageHashes.has(ph)) { appendMessage('bot','중복된 이미지입니다.'); continue; }
+            seenImageHashes.add(ph);
 
-          const url = URL.createObjectURL(file);
-          appendMessage('user', `<img src="${url}" class="max-w-[240px] rounded border shadow">`);
+            const url = URL.createObjectURL(file);
+            appendMessage('user', `<img src="${url}" class="max-w-[240px] rounded border shadow">`);
 
-          if (!currentAssign){ appendMessage('bot','먼저 고유번호를 설정하세요. 예) <b>AA0001</b>'); continue; }
+            if (!currentAssign){ appendMessage('bot','먼저 고유번호를 설정하세요. 예) <b>AA0001</b>'); continue; }
 
-          const { voteDate, voteTime, voteNo } = await getOCR(file);
-          const codeOnly = (voteNo||'').replace(/^No\.?\s*/i,'');
-          const line = `${voteDate || '❌'}\t${voteTime || '❌'}\t${codeOnly || '❌'}`;
-          appendMessage('bot', line, { plainText:true, copyText: line });
-          if (voteDate && voteTime && codeOnly) addRow(voteDate, voteTime, codeOnly);
+            const { voteDate, voteTime, voteNo } = await getOCR(file);
+            const codeOnly = (voteNo||'').replace(/^No\.?\s*/i,'');
+            const line = `${voteDate || '❌'}\t${voteTime || '❌'}\t${codeOnly || '❌'}`;
+            appendMessage('bot', line, { plainText:true, copyText: line });
+            if (voteDate && voteTime && codeOnly) addRow(voteDate, voteTime, codeOnly);
+          } catch(err){
+            appendMessage('bot', `에러: ${String(err && err.message || err)}`);
+          }
         }
         setStatus('대기 중'); processing = false;
       }
