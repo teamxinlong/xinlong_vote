@@ -1,4 +1,4 @@
-0914 태토
+0914 날ㅋ자시간수정
 
 <!DOCTYPE html>
 <html lang="ko">
@@ -21,8 +21,14 @@
     /* 표가 컨테이너 폭 안에서 자동 줄바꿈되도록 고정 레이아웃 */
     table.table-fixed { table-layout: fixed; width: 100%; }
     th, td { vertical-align: top; }
-    .editable-code { outline:none; border-bottom:1px dashed #cbd5e1; }
-    .editable-code:focus { background:#fff7ed; border-bottom-color:#fb923c; }
+
+    /* 표 인라인 편집 공통 스타일 */
+    .editable-cell, .editable-code {
+      outline:none; border-bottom:1px dashed #cbd5e1;
+    }
+    .editable-cell:focus, .editable-code:focus {
+      background:#fff7ed; border-bottom-color:#fb923c;
+    }
 
     /* 채팅 내 시리얼 입력칸: 넓게 + 커서/선택 보장(iOS) */
     .chat-code-input{
@@ -133,7 +139,6 @@
         document.body.removeChild(ta); return ok;
       }
 
-      // 채팅 메시지(봇 카드 가로 = 100% 지원)
       function appendMessage(sender, html, {plainText=false, fullWidth=false}={}){
         const msg = document.createElement('div');
         msg.className = sender==='user' ? 'text-left' : 'text-right';
@@ -200,23 +205,52 @@
         resultTbody.innerHTML = rows.map((r,i)=>`
           <tr class="border-t">
             <td class="px-3 py-2 mono wrap-anywhere">${r.assign}</td>
-            <td class="px-3 py-2 mono wrap-anywhere">${r.date||''}</td>
-            <td class="px-3 py-2 mono wrap-anywhere">${r.time||''}</td>
-            <td class="px-3 py-2 mono wrap-anywhere editable-code" contenteditable="true" data-index="${i}" spellcheck="false">${r.code||''}</td>
+            <td class="px-3 py-2 mono wrap-anywhere editable-cell" contenteditable="true" data-index="${i}" data-field="date" spellcheck="false">${r.date||''}</td>
+            <td class="px-3 py-2 mono wrap-anywhere editable-cell" contenteditable="true" data-index="${i}" data-field="time" spellcheck="false">${r.time||''}</td>
+            <td class="px-3 py-2 mono wrap-anywhere editable-cell" contenteditable="true" data-index="${i}" data-field="code" spellcheck="false">${r.code||''}</td>
           </tr>
         `).join('');
       }
 
-      // 테이블에서 시리얼 직접 수정도 가능
+      // === 테이블 인라인 편집(날짜/시간/시리얼)
       resultTbody.addEventListener('keydown', (e)=>{
-        const el = e.target.closest('.editable-code'); if(!el) return;
+        const el = e.target.closest('.editable-cell'); if(!el) return;
         if(e.key==='Enter'){ e.preventDefault(); el.blur(); }
       });
+
+      // 보정 유틸
+      function toHalfwidth(s){
+        return s.replace(/[\uFF01-\uFF5E]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/\u3000/g,' ');
+      }
+      function normalizeDateInput(v){
+        v = toHalfwidth(v).trim();
+        // 2025.9.1 / 2025-9-1 / 2025/9/1 / 2025년 9월 1일
+        let m = v.match(/(20\d{2})\D+(\d{1,2})\D+(\d{1,2})/);
+        if(!m){ return v; }
+        const y=m[1], mo=String(m[2]).padStart(2,'0'), d=String(m[3]).padStart(2,'0');
+        return `${y}.${mo}.${d}`;
+      }
+      function normalizeTimeInput(v){
+        v = toHalfwidth(v).trim().replace(/[시\.]/g,':').replace(/-/g,':').replace(/\s+/g,'');
+        const m = v.match(/^([01]?\d|2[0-3]):?([0-5]\d)$/);
+        if(!m){ return v; }
+        const hh=String(m[1]).padStart(2,'0'), mm=m[2];
+        return `${hh}:${mm}`;
+      }
+
       resultTbody.addEventListener('blur', (e)=>{
-        const el = e.target.closest('.editable-code'); if(!el) return;
-        const i = parseInt(el.dataset.index,10);
-        const v = (el.innerText||'').trim();
-        if (!Number.isNaN(i) && rows[i]) rows[i].code = v;
+        const el = e.target.closest('.editable-cell'); if(!el) return;
+        const i   = parseInt(el.dataset.index,10);
+        const key = el.dataset.field;              // 'date' | 'time' | 'code'
+        if (Number.isNaN(i) || !rows[i] || !key) return;
+
+        let v = (el.innerText||'').trim();
+        if (key==='date') v = normalizeDateInput(v);
+        else if (key==='time') v = normalizeTimeInput(v);
+
+        rows[i][key] = v;
+        // 셀 표시를 보정값으로 업데이트
+        el.innerText = v;
       }, true);
 
       copyAllBtn.onclick = async ()=>{
@@ -226,10 +260,7 @@
         setTimeout(()=>copyAllBtn.textContent=old,1500);
       };
 
-      // ===== OCR 전처리
-      function toHalfwidth(str){
-        return str.replace(/[\uFF01-\uFF5E]/g, ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/\u3000/g,' ');
-      }
+      // ===== OCR 전처리/추출 (아래 함수들은 이전 버전과 동일) =====
       function normalizePunct(str){
         return str.replace(/[:：]/g,':').replace(/[．·。]/g,'.').replace(/[／]/g,'/').replace(/[－–—]/g,'-').replace(/[,，]/g,',');
       }
@@ -433,10 +464,7 @@
 
       async function ocrFile(file){
         const w = await getWorker();
-        const text0 = await recognizeRect(w, file, null, {
-          tessedit_pageseg_mode: 6,
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
-        });
+        const text0 = await recognizeRect(w, file, null, { tessedit_pageseg_mode: 6, tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./' });
         let f = extractFields(text0);
 
         const url = URL.createObjectURL(file);
@@ -445,10 +473,7 @@
 
         if ((!f.voteDate || !f.voteTime) && W && H){
           const midRect = { left: 0, top: Math.floor(H*0.35), width: W, height: Math.floor(H*0.35) };
-          const textMid = await recognizeRect(w, url, midRect, {
-            tessedit_pageseg_mode: 7,
-            tessedit_char_whitelist: DATE_WHITELIST
-          });
+          const textMid = await recognizeRect(w, url, midRect, { tessedit_pageseg_mode: 7, tessedit_char_whitelist: DATE_WHITELIST });
           const fm = extractFields(textMid);
           if (!f.voteDate) f.voteDate = fm.voteDate;
           if (!f.voteTime) f.voteTime = fm.voteTime;
@@ -457,7 +482,6 @@
         if ((!f.voteNo || f.voteNo.length < 10) && W && H){
           const botRect = { left: 0, top: Math.floor(H*0.65), width: W, height: Math.floor(H*0.35) };
           const tries = [];
-
           const tChoices = await recognizeSerialWithChoices(w, url, botRect); tries.push(tChoices);
           const t1 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:7,  tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t1);
           const t2 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:13, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t2);
@@ -503,31 +527,20 @@
       btnAssignAndDone.onclick = ()=>{
         const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error, {fullWidth:true}); return; }
-
         const line3 = info.isSingle
           ? `${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`
           : `${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
-
-        const msg =
-          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
-          `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
-          line3;
-
+        const msg = `씬롱이에게 소중한 투표 감사합니다 ❤\n부여된 고유번호는 ${info.assignUpper}입니다.\n${line3}`;
         appendMessage('bot', msg, { plainText:true, fullWidth:true });
       };
 
       btnDone.onclick = ()=>{
         const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error, {fullWidth:true}); return; }
-
         const line2 = info.isSingle
           ? `${info.assignUpper}님, ${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`
           : `${info.assignUpper}님, ${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
-
-        const msg =
-          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
-          line2;
-
+        const msg = `씬롱이에게 소중한 투표 감사합니다 ❤\n${line2}`;
         appendMessage('bot', msg, { plainText:true, fullWidth:true });
       };
 
