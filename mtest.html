@@ -1,3 +1,5 @@
+0914 모바일 채팅창수정 테스트코드
+
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -15,14 +17,15 @@
     /* ====== 자동 줄바꿈 강화 ====== */
     pre { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
     .wrap-anywhere { overflow-wrap: anywhere; word-break: break-word; }
-    /* 연속영문/숫자가 아주 길 때까지 확실히 줄바꿈하려면 아래 라인도 추가 가능 */
-    /* .wrap-anywhere { word-break: break-all; overflow-wrap: anywhere; } */
 
     /* 표가 컨테이너 폭 안에서 자동 줄바꿈되도록 고정 레이아웃 */
     table.table-fixed { table-layout: fixed; width: 100%; }
     th, td { vertical-align: top; }
     .editable-code { outline:none; border-bottom:1px dashed #cbd5e1; }
     .editable-code:focus { background:#fff7ed; border-bottom-color:#fb923c; }
+
+    /* 채팅 내 시리얼 인풋 */
+    .chat-code-input { min-width: 8rem; }
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
@@ -68,7 +71,6 @@
     </div>
     <div class="bg-white rounded shadow">
       <table class="min-w-full text-sm table-fixed">
-        <!-- 열 너비 고정: 모바일에서 가독성↑ -->
         <colgroup>
           <col style="width:28%"><col style="width:26%"><col style="width:18%"><col style="width:28%">
         </colgroup>
@@ -110,7 +112,7 @@
       let worker = null;                   // tesseract worker (재사용)
       const seenImageHashes = new Set();   // 중복 이미지 차단
 
-      // --- utils
+      // === 유틸 ===
       function setStatus(txt){ statusEl.textContent = txt; }
 
       async function copyToClipboard(text){
@@ -122,6 +124,7 @@
         document.body.removeChild(ta); return ok;
       }
 
+      // appendMessage: 만든 요소를 반환하도록 수정
       function appendMessage(sender, html, {plainText=false, copyText=null}={}){
         const msg = document.createElement('div');
         msg.className = sender==='user' ? 'text-left' : 'text-right';
@@ -144,15 +147,23 @@
         }
         wrap.appendChild(header);
 
-        if (plainText){ const pre=document.createElement('pre'); pre.textContent=html; wrap.appendChild(pre); }
-        else { const div=document.createElement('div'); div.innerHTML=html; wrap.appendChild(div); }
+        if (plainText){
+          const pre=document.createElement('pre');
+          pre.textContent=html;
+          wrap.appendChild(pre);
+        } else {
+          const div=document.createElement('div');
+          div.innerHTML=html;
+          wrap.appendChild(div);
+        }
 
         msg.appendChild(wrap); chatbox.appendChild(msg); chatbox.scrollTop=chatbox.scrollHeight;
+        return msg;
       }
 
       function parseAssign(text){
         const s=(text||'').trim();
-        return /^[A-Za-z]{2}\d{4}$/.test(s) ? s.toUpperCase() : null; // 전체 일치 + 대문자화
+        return /^[A-Za-z]{2}\d{4}$/.test(s) ? s.toUpperCase() : null;
       }
 
       function setAssign(assign){
@@ -168,14 +179,14 @@
         resultTbody.innerHTML = rows.map((r,i)=>`
           <tr class="border-t">
             <td class="px-3 py-2 mono wrap-anywhere">${r.assign}</td>
-            <td class="px-3 py-2 mono wrap-anywhere">${r.date}</td>
-            <td class="px-3 py-2 mono wrap-anywhere">${r.time || ''}</td>
-            <td class="px-3 py-2 mono wrap-anywhere editable-code" contenteditable="true" data-index="${i}" spellcheck="false">${r.code}</td>
+            <td class="px-3 py-2 mono wrap-anywhere editable-code" contenteditable="true" data-index="${i}" data-field="date" spellcheck="false">${r.date || ''}</td>
+            <td class="px-3 py-2 mono wrap-anywhere editable-code" contenteditable="true" data-index="${i}" data-field="time" spellcheck="false">${r.time || ''}</td>
+            <td class="px-3 py-2 mono wrap-anywhere editable-code" contenteditable="true" data-index="${i}" data-field="code" spellcheck="false">${r.code || ''}</td>
           </tr>
         `).join('');
       }
 
-      // 인라인 편집 저장
+      // 테이블 인라인 편집
       resultTbody.addEventListener('keydown', (e)=>{
         const el = e.target.closest('.editable-code'); if(!el) return;
         if(e.key==='Enter'){ e.preventDefault(); el.blur(); }
@@ -183,18 +194,19 @@
       resultTbody.addEventListener('blur', (e)=>{
         const el = e.target.closest('.editable-code'); if(!el) return;
         const i = parseInt(el.dataset.index,10);
+        const f = el.dataset.field;
         const v = (el.innerText||'').trim();
-        if (!Number.isNaN(i) && rows[i] && v) rows[i].code = v; else if(rows[i]) el.innerText = rows[i].code;
+        if (!Number.isNaN(i) && rows[i] && f){ rows[i][f] = v; }
       }, true);
 
       copyAllBtn.onclick = async ()=>{
-        const tsv = rows.map(r=>`${r.assign}\t${r.date}\t${r.time || ''}\t${r.code}`).join('\n');
+        const tsv = rows.map(r=>`${r.assign}\t${r.date||''}\t${r.time||''}\t${r.code||''}`).join('\n');
         const ok = await copyToClipboard(tsv);
         const old = copyAllBtn.textContent; copyAllBtn.textContent = ok?'복사됨':'복사실패';
         setTimeout(()=>copyAllBtn.textContent=old,1500);
       };
 
-      // ===== OCR 전처리 (lookbehind 미사용)
+      // ===== OCR 전처리
       function toHalfwidth(str){
         return str.replace(/[\uFF01-\uFF5E]/g, ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0))
                   .replace(/\u3000/g,' ');
@@ -429,7 +441,7 @@
           const tries = [];
 
           const tChoices = await recognizeSerialWithChoices(w, url, botRect); tries.push(tChoices);
-          const t1 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:7, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t1);
+          const t1 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:7,  tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t1);
           const t2 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:13, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t2);
           const t3 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:11, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t3);
 
@@ -512,7 +524,7 @@
         cv.width = w; cv.height = h;
         const ctx = cv.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(img, 0, 0, w, h);
-        const data = ctx.getImageData(0,0,w,h).data; // RGBA
+        const data = ctx.getImageData(0,0,w,h).data;
         if (crypto && crypto.subtle) {
           const digest = await crypto.subtle.digest('SHA-256', data);
           return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -520,6 +532,49 @@
           let hash = 0; for (let i=0;i<data.length;i++) hash = (hash*31 + data[i]) >>> 0;
           return 'fh-' + hash.toString(16);
         }
+      }
+
+      // === 채팅에 "수정 가능한 OCR 카드" 추가 ===
+      function appendEditableOCRMessage(rowIndex, date, time, code){
+        const safeDate = date || '❌';
+        const safeTime = time || '❌';
+        const safeCode = code || '';
+
+        const html = `
+          <div class="mono">
+            <div class="text-xs text-gray-600 mb-1">OCR 결과 — 채팅에서 시리얼넘버 수정 가능</div>
+            <div class="flex items-start gap-2 wrap-anywhere">
+              <div class="pt-1">${safeDate}\t${safeTime}\t</div>
+              <input type="text" class="border rounded px-2 py-1 text-sm mono flex-1 chat-code-input"
+                     value="${safeCode.replace(/"/g,'&quot;')}" data-row="${rowIndex}"/>
+              <button type="button" class="ml-1 px-2 py-1 text-xs border rounded chat-copy-btn">복사</button>
+            </div>
+          </div>
+        `;
+        const msgEl = appendMessage('bot', html, { plainText:false });
+
+        const input = msgEl.querySelector('.chat-code-input');
+        const copyB = msgEl.querySelector('.chat-copy-btn');
+
+        // 입력 즉시 rows 업데이트 + 테이블 리렌더
+        input.addEventListener('input', (e)=>{
+          const idx = parseInt(e.target.dataset.row,10);
+          const v = e.target.value.trim();
+          if (!Number.isNaN(idx) && rows[idx]) {
+            rows[idx].code = v;
+            renderTable();
+          }
+        });
+
+        // 복사: 현재 입력값 기준으로 복사
+        copyB.addEventListener('click', async ()=>{
+          const idx = parseInt(input.dataset.row,10);
+          const r = rows[idx];
+          const line = `${r.date || '❌'}\t${r.time || '❌'}\t${(r.code || '❌')}`;
+          const ok = await copyToClipboard(line);
+          copyB.textContent = ok ? '복사됨' : '복사실패';
+          setTimeout(()=>copyB.textContent='복사',1500);
+        });
       }
 
       // --- queue processor
@@ -544,9 +599,18 @@
 
           const { voteDate, voteTime, voteNo } = await ocrFile(file);
           const codeOnly = (voteNo||'').replace(/^No\.?\s*/i,'');
-          const line = `${voteDate || '❌'}\t${voteTime || '❌'}\t${codeOnly || '❌'}`;
-          appendMessage('bot', line, { plainText:true, copyText: line });
-          if (voteDate && voteTime && codeOnly) addRow(voteDate, voteTime, codeOnly);
+
+          // 테이블에 누적(기존 로직 유지: 3개 모두 있을 때만 추가)
+          if (voteDate && voteTime && codeOnly){
+            const rowIndex = rows.length;      // push 전 인덱스 기억
+            addRow(voteDate, voteTime, codeOnly);
+            // 채팅에 수정 가능한 카드로 출력
+            appendEditableOCRMessage(rowIndex, voteDate, voteTime, codeOnly);
+          } else {
+            // 부족하면 기존처럼 단순 출력(수정 매핑 없음)
+            const line = `${voteDate || '❌'}\t${voteTime || '❌'}\t${codeOnly || '❌'}`;
+            appendMessage('bot', line, { plainText:true, copyText: line });
+          }
         }
         setStatus('대기 중');
         processing = false;
