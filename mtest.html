@@ -474,7 +474,7 @@
         let f = extractFields(text0);
 
         let url = (typeof srcOrFile === 'string') ? srcOrFile : URL.createObjectURL(srcOrFile);
-        const img = new Image(); img.src = url; try { await img.decode(); } catch(_){}}
+        const img = new Image(); img.src = url; try { await img.decode(); } catch(_){}
         const W = img.naturalWidth || 0, H = img.naturalHeight || 0;
 
         if ((!f.voteDate || !f.voteTime) && W && H){
@@ -650,8 +650,8 @@
       renderTable();
 
       window.addEventListener('beforeunload', async function(){
-        try { if (worker){ await worker.terminate(); worker=null; } } catch(_){}}
-      );
+        try { if (worker){ await worker.terminate(); worker=null; } } catch(_){}
+      });
     })();
   </script>
 </body>
