@@ -60,7 +60,14 @@
   <button id="btnSameDay" class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded btn">
     당일투표
   </button>
+    <button id="btnKorean" class="bg-blue-600 hover:bg-blue-700 text-white px-2 py-2 rounded btn text-xs leading-tight">
+    한국어
+  </button>
+  <button id="btnScreenshot" class="bg-slate-700 hover:bg-slate-800 text-white px-2 py-2 rounded btn text-xs leading-tight">
+    스크린샷
+  </button>
 </div>
+  
 
   <!-- 결과 테이블 -->
   <div id="resultPanel" class="w-full max-w-md mt-1">
@@ -388,6 +395,9 @@
 const btnCumulative = document.getElementById('btnCumulative');
 const btnSameDay = document.getElementById('btnSameDay');
 
+      const btnKorean = document.getElementById('btnKorean');
+const btnScreenshot = document.getElementById('btnScreenshot');
+
 // 2) 클릭 핸들러
 if (btnCumulative) {
   btnCumulative.onclick = () => {
@@ -403,6 +413,21 @@ if (btnSameDay) {
     appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
   };
 }
+
+      if (btnKorean) {
+  btnKorean.onclick = () => {
+    const msg = "정확한 집계를 위해 앱 언어를 한국어로 설정한 화면만 인정합니다.";
+    appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+  };
+}
+
+if (btnScreenshot) {
+  btnScreenshot.onclick = () => {
+    const msg = "투표 인증서는 엠넷플러스 어플에서 \"이미지 저장\"을 통해 다운로드한 '원본'으로 전송해 주셔야만 투표 집계 및 반영해 드리고 있습니다. 자세한 내용은 채팅방 하단 메뉴에서 '투표 인증 방법'을 클릭해 주세요.";
+    appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+  };
+}
+
 
 
       
