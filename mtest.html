@@ -52,6 +52,16 @@
     <button id="btnDone" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded btn">검수 완료</button>
   </div>
 
+  <!-- 안내 버튼 바 -->
+<div id="noticeBar" class="w-full max-w-md flex gap-2 mt-2">
+  <button id="btnCumulative" class="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded btn">
+    누적투표수
+  </button>
+  <button id="btnSameDay" class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded btn">
+    당일투표
+  </button>
+</div>
+
   <!-- 결과 테이블 -->
   <div id="resultPanel" class="w-full max-w-md mt-1">
     <div class="flex items-center justify-between mb-1">
@@ -373,6 +383,29 @@
           `${info.assignUpper}님, ${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
         appendMessage('bot', msg, { plainText:true, fullWidth:true, copyText: msg });
       };
+
+      // 1) DOM 참조
+const btnCumulative = document.getElementById('btnCumulative');
+const btnSameDay = document.getElementById('btnSameDay');
+
+// 2) 클릭 핸들러
+if (btnCumulative) {
+  btnCumulative.onclick = () => {
+    const msg = "안녕하세요 :) 이벤트 기간 내는 당일 투표수만 보내드립니다. 총 누적 투표수는 모든 집계 및 검수가 끝나고 안내드릴 예정입니다. 이벤트에 참여해주셔서 감사합니다.";
+    // 모바일: fullWidth:true, PC: 생략해도 무방
+    appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+  };
+}
+
+if (btnSameDay) {
+  btnSameDay.onclick = () => {
+    const msg = "안녕하세요. 당일 투표는 당일 전송 원칙으로, n일 표는 미집계됨을 알려드립니다. 꼭 투표 당일날 전송 부탁드립니다.";
+    appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+  };
+}
+
+
+      
 
       async function imagePerceptualHash(file){
         const url = URL.createObjectURL(file);
