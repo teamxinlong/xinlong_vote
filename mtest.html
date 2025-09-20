@@ -52,18 +52,29 @@
     <button id="btnDone" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded btn">검수 완료</button>
   </div>
 
-  <!-- 안내 버튼 바 -->
-<div id="noticeBar" class="w-full max-w-md flex gap-2 mt-2">
-  <button id="btnCumulative" class="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded btn">
+ <!-- 안내 버튼 바 (4개 한 줄, 모두 파란색/동일 크기) -->
+<div id="noticeBar" class="w-full max-w-md grid grid-cols-4 gap-2 mt-2">
+  <button id="btnCumulative"
+          class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
+                 bg-blue-600 hover:bg-blue-700 text-white">
     누적투표수
   </button>
-  <button id="btnSameDay" class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded btn">
+
+  <button id="btnSameDay"
+          class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
+                 bg-blue-600 hover:bg-blue-700 text-white">
     당일투표
   </button>
-    <button id="btnKorean" class="bg-blue-600 hover:bg-blue-700 text-white px-2 py-2 rounded btn text-xs leading-tight">
+
+  <button id="btnKorean"
+          class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
+                 bg-blue-600 hover:bg-blue-700 text-white">
     한국어
   </button>
-  <button id="btnScreenshot" class="bg-slate-700 hover:bg-slate-800 text-white px-2 py-2 rounded btn text-xs leading-tight">
+
+  <button id="btnScreenshot"
+          class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
+                 bg-blue-600 hover:bg-blue-700 text-white">
     스크린샷
   </button>
 </div>
