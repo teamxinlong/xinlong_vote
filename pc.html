@@ -13,7 +13,6 @@
     .mono { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
     .editable { outline: none; border-bottom: 1px dashed #cbd5e1; }
     .editable:focus { background: #fff7ed; border-bottom-color: #fb923c; }
-    /* 모바일에서도 가로 스크롤 없이 보이도록(긴 텍스트는 줄바꿈) */
     td.mono { word-break: break-all; white-space: normal; }
   </style>
 </head>
@@ -183,7 +182,7 @@
         resultTbody.innerHTML = html;
       }
 
-      // 인라인 편집(날짜/시간/시리얼)
+      // 인라인 편집
       resultTbody.addEventListener('keydown', function(e){
         const el = e.target.closest ? e.target.closest('.editable') : null;
         if (!el) return;
@@ -222,10 +221,10 @@
 
         var assign = parseAssign(text);
         if (assign) {
-          setAssign(assign); // 리셋 + 설정
+          setAssign(assign);
           appendMessage('bot', '고유번호 ' + currentAssign + ' 입니다.');
         } else {
-          appendMessage('bot', '잘못된 접근입니다.'); // 테이블 유지
+          appendMessage('bot', '잘못된 접근입니다.');
         }
       }
       chatForm.addEventListener('submit', function(e){ e.preventDefault(); handleSend(); });
@@ -262,7 +261,6 @@
       // ----- 안내 문구 제거용 -----
       function stripSerialNoise(s){
         if (!s) return s;
-        // 한글 문구 / 해시태그 / 영문 키워드 모두 제거(대소문자 무시)
         const patterns = [
           /이미지\s*저장/ig,
           /투표인증서를\s*해시태그와\s*함께\s*공유해보세요!?/ig,
@@ -349,8 +347,6 @@
       const DATE_WHITELIST   = '0123456789:. -/KST년월일시hH';
       const SERIAL_WHITELIST = 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-      // 시리얼 길이 규칙
-      const SERIAL_MIN = 22;
       const SERIAL_MAX = 30;
 
       function clampSerialCore(core){
@@ -361,7 +357,6 @@
       }
 
       function enforceOutputSerial(mPrefixed){
-        // 입력이 'No.M-...' 또는 'M-...' 모두 허용
         let core = (mPrefixed || '').replace(/^No\.?\s*/i,'').replace(/^M-?/,'');
         core = stripSerialNoise(core);
         core = clampSerialCore(core);
@@ -531,7 +526,6 @@
             tessedit_char_whitelist: SERIAL_WHITELIST
           }); tries.push(t3);
 
-          // 정규화 + 노이즈 제거 + 길이 클램프
           const candidates = tries
             .map(enforceOutputSerial)
             .filter(x => /^M-[A-Za-z0-9_-]{4,}/.test(x));
@@ -539,7 +533,7 @@
           if (candidates.length){
             candidates.sort((a,b)=>scoreSerial(b)-scoreSerial(a));
             const best = candidates[0];
-            if (!f.voteNo || scoreSerial(최고) > scoreSerial(f.voteNo)) {
+            if (!f.voteNo || scoreSerial(best) > scoreSerial(f.voteNo)) {
               f.voteNo = best.replace(/^No\.?\s*/i,'');
             }
           }
@@ -563,58 +557,38 @@
         });
         const dateLine = parts.join(', ');
 
-        const isSingle = dates.length === 1;
-        const singleMMDD = isSingle
-          ? dates[0].replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3')
-          : '';
-
         return {
           assignUpper: (currentAssign || '').toUpperCase(),
-          total: rows.length,
-          dateLine,
-          isSingle,
-          singleMMDD
+          dateLine
         };
       }
 
+      // ▶ 고유번호 부여+검수 완료
       btnAssignAndDone.onclick = function(){
         const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error); return; }
 
-        let line3;
-        if (info.isSingle) {
-          line3 = `${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
-        } else {
-          line3 = `${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
-        }
-
         const msg =
           `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
           `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
-          line3;
+          `${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
 
         appendMessage('bot', msg, { plainText: true, copyText: msg });
       };
 
+      // ▶ 검수 완료
       btnDone.onclick = function(){
         const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error); return; }
 
-        let line2;
-        if (info.isSingle) {
-          line2 = `${info.assignUpper}님, ${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
-        } else {
-          line2 = `${info.assignUpper}님, ${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
-        }
-
         const msg =
           `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
-          line2;
+          `${info.assignUpper}님, ${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
 
         appendMessage('bot', msg, { plainText: true, copyText: msg });
       };
 
-      // ===== 중복 이미지 감지: 퍼셉추얼 해시(64x64 픽셀 SHA-256) =====
+      // ===== 중복 이미지 감지: 퍼셉추얼 해시 =====
       async function imagePerceptualHash(file){
         const url = URL.createObjectURL(file);
         const img = new Image();
@@ -625,7 +599,7 @@
         cv.width = w; cv.height = h;
         const ctx = cv.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(img, 0, 0, w, h);
-        const data = ctx.getImageData(0,0,w,h).data; // RGBA
+        const data = ctx.getImageData(0,0,w,h).data;
         if (crypto && crypto.subtle) {
           const digest = await crypto.subtle.digest('SHA-256', data);
           const hex = Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -637,7 +611,7 @@
         }
       }
 
-      // 이미지 붙여넣기 → (중복검사) → OCR → 행 누적
+      // 이미지 붙여넣기 → OCR → 행 누적
       window.addEventListener('paste', async function(e){
         var items = (e.clipboardData && e.clipboardData.items) ? e.clipboardData.items : [];
         for (var i=0;i<items.length;i++) {
@@ -645,7 +619,7 @@
           if (item.kind === 'file' && item.type.indexOf('image/') === 0) {
             var file = item.getAsFile();
 
-            // 1) 퍼셉추얼 해시로 중복 검사
+            // 1) 퍼셉추얼 해시 중복 검사
             const ph = await imagePerceptualHash(file);
             if (seenImageHashes.has(ph)) {
               appendMessage('bot', '중복된 이미지입니다.');
@@ -662,12 +636,10 @@
             }
 
             var r = await ocrWithTesseract(file);
-            // 안내문구 제거 + 길이 클램프 + M- 통일
             var codeOnly = enforceOutputSerial(r.voteNo || '');
             var line = (r.voteDate || '❌') + '\t' + (r.voteTime || '❌') + '\t' + (codeOnly || '❌');
             appendMessage('bot', line, { plainText: true, copyText: line });
 
-            // ✅ 이제는 일부가 비어도 무조건 테이블에 추가 (수동 보정 가능)
             addRow(r.voteDate || '', r.voteTime || '', codeOnly || '');
           }
         }
