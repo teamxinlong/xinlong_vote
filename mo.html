@@ -1,5 +1,6 @@
-모바일은 엠플에서 저장된 투표인증샷만 인식 가능합니다~!
-스크린샷/촬영본은 돌리지 않는게 정신건강에..조하요~
+25.09.21 수정버전
+파란색 버튼 - 자동응답이에용
+
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -53,6 +54,34 @@
     <button id="btnAssignAndDone" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded btn">고유번호 부여+검수 완료</button>
     <button id="btnDone" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded btn">검수 완료</button>
   </div>
+
+ <!-- 안내 버튼 바 (4개 한 줄, 모두 파란색/동일 크기) -->
+<div id="noticeBar" class="w-full max-w-md grid grid-cols-4 gap-2 mt-2">
+  <button id="btnCumulative"
+          class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
+                 bg-blue-600 hover:bg-blue-700 text-white">
+    누적투표수
+  </button>
+
+  <button id="btnSameDay"
+          class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
+                 bg-blue-600 hover:bg-blue-700 text-white">
+    당일투표
+  </button>
+
+  <button id="btnKorean"
+          class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
+                 bg-blue-600 hover:bg-blue-700 text-white">
+    한국어
+  </button>
+
+  <button id="btnScreenshot"
+          class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
+                 bg-blue-600 hover:bg-blue-700 text-white">
+    스크린샷
+  </button>
+</div>
+  
 
   <!-- 결과 테이블 -->
   <div id="resultPanel" class="w-full max-w-md mt-1">
@@ -117,7 +146,7 @@
         label.textContent = sender==='user'?'👤 유저:':'🤖 시스템:';
         header.appendChild(label);
 
-        if (copyText){ // 복사 버튼(검수 메시지 전용)
+        if (copyText){
           const btn=document.createElement('button');
           btn.className='ml-2 text-xs px-2 py-1 rounded border btn';
           btn.textContent='복사';
@@ -139,7 +168,7 @@
             <textarea rows="1" class="chat-code-input" data-row="${rowIndex}">${code||''}</textarea>
           </div>
         `;
-        const msgEl = appendMessage('bot', html, { fullWidth:true }); // OCR 출력에는 복사버튼 없음
+        const msgEl = appendMessage('bot', html, { fullWidth:true });
         const ta = msgEl.querySelector('textarea');
         const autosize = (el)=>{ el.style.height='auto'; el.style.height = el.scrollHeight + 'px'; };
         autosize(ta);
@@ -209,7 +238,7 @@
         setTimeout(()=>copyAllBtn.textContent=old,1500);
       };
 
-      // ===== OCR 유틸 (생략 없이 포함)
+      // ===== OCR 유틸
       function normalizePunct(str){ return str.replace(/[:：]/g,':').replace(/[．·。]/g,'.').replace(/[／]/g,'/').replace(/[－–—]/g,'-').replace(/[,，]/g,','); }
       function fixDigitLookalikes(str){
         let prev;
@@ -334,11 +363,15 @@
           const botRect = { left: 0, top: Math.floor(H*0.65), width: W, height: Math.floor(H*0.35) };
           const tries = [];
           const tChoices = await recognizeSerialWithChoices(w, url, botRect); tries.push(tChoices);
-          const t1 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:7, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t1);
-          const t2 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:13, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t2);
+          const t1 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:13, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t1);
+          const t2 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:7,  tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t2);
           const t3 = await recognizeRect(w, url, botRect, { tessedit_pageseg_mode:11, tessedit_char_whitelist: SERIAL_WHITELIST }); tries.push(t3);
           const candidates = tries.map(normalizeSerial).filter(x => /No\.?M[-_][A-Za-z0-9_-]{4,}/i.test(x));
-          if (candidates.length){ candidates.sort((a,b)=>scoreSerial(b)-scoreSerial(a)); const best = candidates[0]; if (!f.voteNo || scoreSerial(최고) > scoreSerial(f.voteNo)) f.voteNo = best; }
+          if (candidates.length){
+            candidates.sort((a,b)=>scoreSerial(b)-scoreSerial(a));
+            const best = candidates[0];
+            if (!f.voteNo || scoreSerial(best) > scoreSerial(f.voteNo)) f.voteNo = best; /* ← 오타 수정 완료 */
+          }
         }
         return f;
       }
@@ -350,28 +383,68 @@
         const dates = Object.keys(byDate).sort((a,b)=>a.localeCompare(b));
         const parts = dates.map(d => d.replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3') + ` ${byDate[d]}표`);
         const dateLine = parts.join(', ');
-        const isSingle = dates.length === 1;
-        const singleMMDD = isSingle ? dates[0].replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3') : '';
-        return { assignUpper:(currentAssign||'').toUpperCase(), total:rows.length, dateLine, isSingle, singleMMDD };
+        return { assignUpper:(currentAssign||'').toUpperCase(), dateLine };
       }
 
-      // ▶ 여기서만 복사 버튼 활성화
+      // ▶ 버튼 출력(데스크톱과 동일 형식)
       btnAssignAndDone.onclick = ()=>{
         const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error, {fullWidth:true}); return; }
-        const line3 = info.isSingle ? `${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`
-                                    : `${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
-        const msg = `씬롱이에게 소중한 투표 감사합니다 ❤\n부여된 고유번호는 ${info.assignUpper}입니다.\n${line3}`;
+        const msg =
+          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
+          `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
+          `${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
         appendMessage('bot', msg, { plainText:true, fullWidth:true, copyText: msg });
       };
       btnDone.onclick = ()=>{
         const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error, {fullWidth:true}); return; }
-        const line2 = info.isSingle ? `${info.assignUpper}님, ${info.singleMMDD} 총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`
-                                    : `${info.assignUpper}님, ${info.dateLine}\n총 ${info.total}표 집계되었습니다. 감사합니다 😺❤`;
-        const msg = `씬롱이에게 소중한 투표 감사합니다 ❤\n${line2}`;
+        const msg =
+          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
+          `${info.assignUpper}님, ${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
         appendMessage('bot', msg, { plainText:true, fullWidth:true, copyText: msg });
       };
+
+      // 1) DOM 참조
+const btnCumulative = document.getElementById('btnCumulative');
+const btnSameDay = document.getElementById('btnSameDay');
+
+      const btnKorean = document.getElementById('btnKorean');
+const btnScreenshot = document.getElementById('btnScreenshot');
+
+// 2) 클릭 핸들러
+if (btnCumulative) {
+  btnCumulative.onclick = () => {
+    const msg = "안녕하세요 :) 이벤트 기간 내는 당일 투표수만 보내드립니다. 총 누적 투표수는 모든 집계 및 검수가 끝나고 안내드릴 예정입니다. 이벤트에 참여해주셔서 감사합니다.";
+    // 모바일: fullWidth:true, PC: 생략해도 무방
+    appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+  };
+}
+
+if (btnSameDay) {
+  btnSameDay.onclick = () => {
+    const msg = "안녕하세요. 당일 투표는 당일 전송 원칙으로, n일 표는 미집계됨을 알려드립니다. 꼭 투표 당일날 전송 부탁드립니다.";
+    appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+  };
+}
+
+      if (btnKorean) {
+  btnKorean.onclick = () => {
+    const msg = "정확한 집계를 위해 앱 언어를 한국어로 설정한 화면만 인정합니다.";
+    appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+  };
+}
+
+if (btnScreenshot) {
+  btnScreenshot.onclick = () => {
+    const msg = "투표 인증서는 엠넷플러스 어플에서 \"이미지 저장\"을 통해 다운로드한 '원본'으로 전송해 주셔야만 투표 집계 및 반영해 드리고 있습니다. 자세한 내용은 채팅방 하단 메뉴에서 '투표 인증 방법'을 클릭해 주세요.";
+    appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+  };
+}
+
+
+
+      
 
       async function imagePerceptualHash(file){
         const url = URL.createObjectURL(file);
