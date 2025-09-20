@@ -540,7 +540,7 @@
           if (candidates.length){
             candidates.sort((a,b)=>scoreSerial(b)-scoreSerial(a));
             const best = candidates[0];
-            if (!f.voteNo || scoreSerial(최고) > scoreSerial(f.voteNo)) {
+            if (!f.voteNo || scoreSerial(best) > scoreSerial(f.voteNo)) {
               f.voteNo = best.replace(/^No\.?\s*/i,'');
             }
           }
