@@ -262,7 +262,6 @@
       // ----- 안내 문구 제거용 -----
       function stripSerialNoise(s){
         if (!s) return s;
-        // 한글 문구 / 해시태그 / 영문 키워드 모두 제거(대소문자 무시)
         const patterns = [
           /이미지\s*저장/ig,
           /투표인증서를\s*해시태그와\s*함께\s*공유해보세요!?/ig,
@@ -349,7 +348,6 @@
       const DATE_WHITELIST   = '0123456789:. -/KST년월일시hH';
       const SERIAL_WHITELIST = 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-      // 시리얼 길이 규칙
       const SERIAL_MIN = 22;
       const SERIAL_MAX = 30;
 
@@ -531,7 +529,6 @@
             tessedit_char_whitelist: SERIAL_WHITELIST
           }); tries.push(t3);
 
-          // 정규화 + 노이즈 제거 + 길이 클램프
           const candidates = tries
             .map(enforceOutputSerial)
             .filter(x => /^M-[A-Za-z0-9_-]{4,}/.test(x));
@@ -567,24 +564,26 @@
         const singleMMDD = isSingle
           ? dates[0].replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3')
           : '';
+        const singleCount = isSingle ? byDate[dates[0]] : 0;
 
         return {
           assignUpper: (currentAssign || '').toUpperCase(),
-          total: rows.length,
+          total: rows.length,      // 유지(출력에는 사용 안 함)
           dateLine,
           isSingle,
-          singleMMDD
+          singleMMDD,
+          singleCount
         };
       }
 
-      // ▶ 메시지(총 n표 제거)
+      // ▶ 버튼 메시지 (총 n표 제거, 단일 날짜는 "n표" 표시)
       btnAssignAndDone.onclick = function(){
         const info = summarizeForMessage();
         if (info.error){ appendMessage('bot', info.error); return; }
 
         let line3;
         if (info.isSingle) {
-          line3 = `${info.singleMMDD} 집계되었습니다. 감사합니다 😺❤`;
+          line3 = `${info.singleMMDD} ${info.singleCount}표 집계되었습니다. 감사합니다 😺❤`;
         } else {
           line3 = `${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
         }
@@ -603,7 +602,7 @@
 
         let line2;
         if (info.isSingle) {
-          line2 = `${info.assignUpper}님, ${info.singleMMDD} 집계되었습니다. 감사합니다 😺❤`;
+          line2 = `${info.assignUpper}님, ${info.singleMMDD} ${info.singleCount}표 집계되었습니다. 감사합니다 😺❤`;
         } else {
           line2 = `${info.assignUpper}님, ${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
         }
