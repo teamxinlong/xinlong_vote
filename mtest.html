@@ -1,5 +1,3 @@
-모바일 빌드 25.09.21
-
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -49,28 +47,17 @@
   </div>
 
   <!-- 검수 메시지 버튼 -->
-  <div id="actionBar" class="w-full max-w-md flex gap-2 mt-3 mb-1">
+  <div class="w-full max-w-md flex gap-2 mt-3 mb-1">
     <button id="btnAssignAndDone" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded btn">고유번호 부여+검수 완료</button>
     <button id="btnDone" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded btn">검수 완료</button>
   </div>
 
-  <!-- 안내 버튼 바 (4개 한 줄, 모두 파란색/동일 크기) -->
+  <!-- 안내 버튼 (4개, 전부 파란색/동일 크기) -->
   <div id="noticeBar" class="w-full max-w-md grid grid-cols-4 gap-2 mt-2">
-    <button id="btnCumulative"
-            class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
-                   bg-blue-600 hover:bg-blue-700 text-white">누적투표수</button>
-
-    <button id="btnSameDay"
-            class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
-                   bg-blue-600 hover:bg-blue-700 text-white">당일투표</button>
-
-    <button id="btnKorean"
-            class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
-                   bg-blue-600 hover:bg-blue-700 text-white">한국어</button>
-
-    <button id="btnScreenshot"
-            class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap
-                   bg-blue-600 hover:bg-blue-700 text-white">스크린샷</button>
+    <button id="btnCumulative" class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap bg-blue-600 hover:bg-blue-700 text-white">누적투표수</button>
+    <button id="btnSameDay"   class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap bg-blue-600 hover:bg-blue-700 text-white">당일투표</button>
+    <button id="btnKorean"    class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap bg-blue-600 hover:bg-blue-700 text-white">한국어</button>
+    <button id="btnScreenshot"class="w-full h-10 px-2 rounded btn text-xs font-medium whitespace-nowrap bg-blue-600 hover:bg-blue-700 text-white">스크린샷</button>
   </div>
 
   <!-- 결과 테이블 -->
@@ -122,7 +109,6 @@
         document.body.removeChild(ta); return ok;
       }
 
-      // ▶ copyText가 전달되면 헤더에 "복사" 버튼 표시
       function appendMessage(sender, html, {plainText=false, fullWidth=false, copyText=null}={}){
         const msg = document.createElement('div');
         msg.className = sender==='user' ? 'text-left' : 'text-right';
@@ -196,19 +182,19 @@
         if(e.key==='Enter'){ e.preventDefault(); el.blur(); }
       });
 
-      function toHalfwidth(s){ return s.replace(/[\uFF01-\uFF5E]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/\u3000/g,' '); }
+      function toHalfwidth(s){
+        return s.replace(/[\uFF01-\uFF5E]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0)).replace(/\u3000/g,' ');
+      }
 
-      // ★ 연도 2자리 확장
+      // --- 날짜 입력 정규화 (수동 편집 시)
       function expandYear(y){
         if (!y) return '';
         y = String(y);
-        if (y.length === 2) return '20' + y.padStart(2,'0'); // '25' => '2025'
+        if (y.length === 2) return '20' + y.padStart(2,'0');
         return y;
       }
-
       function normalizeDateInput(v){
         v = toHalfwidth(v).trim();
-        // YY.MM.DD 또는 YYYY.MM.DD
         let m = v.match(/\b(20\d{2}|\d{2})\D+(\d{1,2})\D+(\d{1,2})\b/);
         if (m){
           const y = expandYear(m[1]);
@@ -216,7 +202,6 @@
           const d  = String(m[3]).padStart(2,'0');
           return `${y}.${mo}.${d}`;
         }
-        // 연도 생략(현재 연도) MM.DD
         m = v.match(/\b(\d{1,2})\D+(\d{1,2})\b/);
         if (m){
           const y  = String(new Date().getFullYear());
@@ -226,7 +211,6 @@
         }
         return v;
       }
-
       function normalizeTimeInput(v){
         v = toHalfwidth(v).trim().replace(/[시\.]/g,':').replace(/-/g,':').replace(/\s+/g,'');
         const m = v.match(/^([01]?\d|2[0-3]):?([0-5]\d)$/);
@@ -234,7 +218,6 @@
         const hh=String(m[1]).padStart(2,'0'), mm=m[2];
         return `${hh}:${mm}`;
       }
-
       resultTbody.addEventListener('blur', (e)=>{
         const el = e.target.closest('.editable-cell'); if(!el) return;
         const i   = parseInt(el.dataset.index,10);
@@ -253,18 +236,36 @@
         setTimeout(()=>copyAllBtn.textContent=old,1500);
       };
 
-      // ===== OCR 유틸
-      function normalizePunct(str){ return str.replace(/[:：]/g,':').replace(/[．·。]/g,'.').replace(/[／]/g,'/').replace(/[－–—]/g,'-').replace(/[,，]/g,','); }
+      // ===== OCR 유틸 =====
+      function normalizePunct(str){
+        return str
+          // 제로폭/비가시 공백류 제거 → 스페이스
+          .replace(/\u00A0|\u2000|\u2001|\u2002|\u2003|\u2004|\u2005|\u2006|\u2007|\u2008|\u2009|\u200A|\u200B|\u200C|\u200D|\u202F|\u205F|\u3000|\uFEFF/g,' ')
+          .replace(/[:：]/g,':')
+          // 다양한 '점' 기호를 일반 점으로 통일
+          .replace(/[．·。‧∙•⸱﹒｡]/g,'.')
+          .replace(/[／∕]/g,'/')
+          .replace(/[－–—‒―﹘﹣]/g,'-')
+          .replace(/[,，]/g,',');
+      }
       function fixDigitLookalikes(str){
         let prev;
         do {
           prev = str;
-          str = str.replace(/(\d)[Oo](\d)/g,'$10$2').replace(/(\d)[lI](\d)/g,'$11$2').replace(/(\d)[Ss](\d)/g,'$15$2')
-                   .replace(/([:.\-시hH])[Oo](\d)/g,'$10$2').replace(/(\d)[Oo]([:.\-시hH])/g,'$10$2')
-                   .replace(/\b[Oo](\d)/g,'0$1').replace(/(\d)[Oo]\b/g,'$10');
+          str = str
+            .replace(/(\d)[Oo](\d)/g,'$10$2')
+            .replace(/(\d)[lI](\d)/g,'$11$2')
+            .replace(/(\d)[Ss](\d)/g,'$15$2')
+            .replace(/(\d)[lI]\b/g,'$11')   // 끝자리 I/l → 1
+            .replace(/\b[lI](\d)/g,'1$1')
+            .replace(/([:.\-시hH])[Oo](\d)/g,'$10$2')
+            .replace(/(\d)[Oo]([:.\-시hH])/g,'$10$2')
+            .replace(/\b[Oo](\d)/g,'0$1')
+            .replace(/(\d)[Oo]\b/g,'$10');
         } while (str!==prev);
         return str;
       }
+
       function extractFields(raw){
         let text = fixDigitLookalikes(normalizePunct(toHalfwidth(raw)));
         const lines = text.split(/\n+/).map(l=>l.trim()).filter(Boolean);
@@ -272,9 +273,9 @@
 
         let voteDate = '', voteTime = '', voteNo = '';
 
-        // ★ 날짜+시간(연도 2자리/생략 허용)
+        // 날짜+시간: 날짜와 시간 사이 임의의 특수문자/공백 최대 5글자 허용
         function findDateTime(s){
-          const re = /\b(?:(20\d{2}|\d{2})[.\-\/]\s*)?(\d{1,2})[.\-\/]\s*(\d{1,2})\s+([01]?\d|2[0-3])\s*[:.시hH]\s*([0-5]\d)\b/i;
+          const re = /\b(?:(20\d{2}|\d{2})[.\-\/]\s*)?(\d{1,2})[.\-\/]\s*(\d{1,2})[^\d]{0,5}([01]?\d|2[0-3])\s*[:.시hH]\s*([0-5]\d)\b/i;
           const m = s.match(re);
           if (!m) return null;
           const year = m[1] ? expandYear(m[1]) : String(new Date().getFullYear());
@@ -284,10 +285,8 @@
           const mm   = m[5];
           return { date:`${year}.${mo}.${d}`, time:`${hh}:${mm}` };
         }
-
-        // ★ 날짜만(연도 2자리/생략 허용)
         function findDateOnly(s){
-          // 1) YY/MM/DD or YYYY.MM.DD
+          // YY/MM/DD or YYYY.MM.DD
           let m = s.match(/\b(20\d{2}|\d{2})[.\-\/]\s*(\d{1,2})[.\-\/]\s*(\d{1,2})\b/);
           if (m){
             const y = expandYear(m[1]);
@@ -295,15 +294,7 @@
             const d  = String(m[3]).padStart(2,'0');
             return `${y}.${mo}.${d}`;
           }
-          // 2) (연도 생략 가능) 9월 21일
-          m = s.match(/(?:(20\d{2}|\d{2})\s*년\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
-          if (m){
-            const y  = expandYear(m[1] || String(new Date().getFullYear()));
-            const mo = String(m[2]).padStart(2,'0');
-            const d  = String(m[3]).padStart(2,'0');
-            return `${y}.${mo}.${d}`;
-          }
-          // 3) (연도 생략) MM.DD
+          // (연도 생략) MM.DD
           m = s.match(/\b(\d{1,2})[.\-\/]\s*(\d{1,2})\b/);
           if (m){
             const y  = String(new Date().getFullYear());
@@ -313,13 +304,11 @@
           }
           return '';
         }
-
         function findTimeOnly(s){
           let m = s.match(/\b([01]?\d|2[0-3])\s*[:시]\s*([0-5]\d)\b/);
           if (!m) m = s.match(/\b([01]?\d|2[0-3])\s*[.\-hH]\s*([0-5]\d)\b/);
           return m ? `${String(m[1]).padStart(2,'0')}:${m[2]}` : '';
         }
-
         function findNo(s){
           const m = s.match(/N[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,512})/i);
           if(!m) return '';
@@ -379,7 +368,10 @@
         let s = raw.replace(/\s+/g,'').replace(/[–—]/g,'-').replace(/[ˍ﹎＿]/g,'_');
         const m = s.match(/N[o0]\.?\s*M[-_](.+)$/i) || s.match(/M[-_](.+)$/i);
         if (m) s = m[1];
-        s = s.replace(/([A-Za-z0-9])[Oo]([A-Za-z0-9])/g,'$10$2').replace(/([A-Za-z0-9])[lI]([A-Za-z0-9])/g,'$11$2').replace(/([A-Za-z0-9])[Ss]([A-Za-z0-9])/g,'$15$2').replace(/[^A-Za-z0-9_-]/g,'');
+        s = s.replace(/([A-Za-z0-9])[Oo]([A-Za-z0-9])/g,'$10$2')
+             .replace(/([A-Za-z0-9])[lI]([A-Za-z0-9])/g,'$11$2')
+             .replace(/([A-Za-z0-9])[Ss]([A-Za-z0-9])/g,'$15$2')
+             .replace(/[^A-Za-z0-9_-]/g,'');
         if (s.length < 4) return '';
         return 'No.M-' + s;
       }
@@ -391,7 +383,7 @@
         const hs=[]; (data.symbols||[]).forEach(s=>{ const ch=s.text||''; if (/[A-HJ-RT-Za-hj-rt-z0-9]/.test(ch)) { const bb=s.bbox||s.box||{}; const h=(bb.y1-bb.y0)||0; if(h) hs.push(h);} });
         hs.sort((a,b)=>a-b); const medianH = hs.length ? hs[Math.floor(hs.length/2)] : 0;
         function bestFrom(sym, group){ if(!sym.choices||!sym.choices.length) return sym.text||''; const cand = sym.choices.filter(c=>group.includes(c.text)).sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0]; return (cand&&cand.text)||(sym.text||''); }
-        let out=''; for(let i=0;i<(data.symbols||[]).length;i++){ const sym=data.symbols[i]; const prev=data.symbols[i-1]?.text||''; const next=data.symbols[i+1]?.text||''; const bb=sym.bbox||sym.box||{}; const h=(bb.y1-bb.y0)||0; let ch=sym.text||'';
+        let out=''; for(let i=0;i<(data.symbols||[]).length;i++){ const sym=data.symbols[i]; const prev=data.symbols[i-1]?.text||''; const next=data.symbols[i+1]?.text||''; const bb=sym.bbox||s.box||{}; const h=(bb.y1-bb.y0)||0; let ch=sym.text||'';
           const G_O0=['O','o','0'], G_Il1=['I','l','1'], G_S5=['S','s','5'];
           if (G_Il1.includes(ch)){ let chosen=bestFrom(sym,G_Il1); if(/\d/.test(prev)||/\d/.test(next)) chosen='1'; if(/[A-Z]/.test(prev)&&/[a-z]/.test(next)) chosen='l'; if(medianH){ if(h>=medianH*1.06) chosen='l'; else if(h<=medianH*0.94) chosen='I'; } ch=chosen; }
           else if (G_O0.includes(ch)){ let chosen=bestFrom(sym,G_O0); if(/\d/.test(prev)||/\d/.test(next)) chosen='0'; ch=chosen; }
@@ -446,55 +438,28 @@
         return { assignUpper:(currentAssign||'').toUpperCase(), dateLine };
       }
 
-      // ▶ 버튼 출력(데스크톱과 동일 형식) — 파란색 버튼 = 자동응답
-      btnAssignAndDone.onclick = ()=>{
-        const info = summarizeForMessage();
-        if (info.error){ appendMessage('bot', info.error, {fullWidth:true}); return; }
-        const msg =
-          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
-          `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
-          `${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
-        appendMessage('bot', msg, { plainText:true, fullWidth:true, copyText: msg });
-      };
-      btnDone.onclick = ()=>{
-        const info = summarizeForMessage();
-        if (info.error){ appendMessage('bot', info.error, {fullWidth:true}); return; }
-        const msg =
-          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
-          `${info.assignUpper}님, ${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
-        appendMessage('bot', msg, { plainText:true, fullWidth:true, copyText: msg });
-      };
-
-      // 안내 자동응답 버튼 핸들러
+      // 자동응답 버튼
       const btnCumulative = document.getElementById('btnCumulative');
       const btnSameDay = document.getElementById('btnSameDay');
       const btnKorean = document.getElementById('btnKorean');
       const btnScreenshot = document.getElementById('btnScreenshot');
 
-      if (btnCumulative) {
-        btnCumulative.onclick = () => {
-          const msg = "안녕하세요 :) 이벤트 기간 내는 당일 투표수만 보내드립니다. 총 누적 투표수는 모든 집계 및 검수가 끝나고 안내드릴 예정입니다. 이벤트에 참여해주셔서 감사합니다.";
-          appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
-        };
-      }
-      if (btnSameDay) {
-        btnSameDay.onclick = () => {
-          const msg = "안녕하세요. 당일 투표는 당일 전송 원칙으로, n일 표는 미집계됨을 알려드립니다. 꼭 투표 당일날 전송 부탁드립니다.";
-          appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
-        };
-      }
-      if (btnKorean) {
-        btnKorean.onclick = () => {
-          const msg = "정확한 집계를 위해 앱 언어를 한국어로 설정한 화면만 인정합니다.";
-          appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
-        };
-      }
-      if (btnScreenshot) {
-        btnScreenshot.onclick = () => {
-          const msg = "투표 인증서는 엠넷플러스 어플에서 \"이미지 저장\"을 통해 다운로드한 '원본'으로 전송해 주셔야만 투표 집계 및 반영해 드리고 있습니다. 자세한 내용은 채팅방 하단 메뉴에서 '투표 인증 방법'을 클릭해 주세요.";
-          appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
-        };
-      }
+      btnCumulative.onclick = () => {
+        const msg = "안녕하세요 :) 이벤트 기간 내는 당일 투표수만 보내드립니다. 총 누적 투표수는 모든 집계 및 검수가 끝나고 안내드릴 예정입니다. 이벤트에 참여해주셔서 감사합니다.";
+        appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+      };
+      btnSameDay.onclick = () => {
+        const msg = "안녕하세요. 당일 투표는 당일 전송 원칙으로, n일 표는 미집계됨을 알려드립니다. 꼭 투표 당일날 전송 부탁드립니다.";
+        appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+      };
+      btnKorean.onclick = () => {
+        const msg = "정확한 집계를 위해 앱 언어를 한국어로 설정한 화면만 인정합니다.";
+        appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+      };
+      btnScreenshot.onclick = () => {
+        const msg = "투표 인증서는 엠넷플러스 어플에서 \"이미지 저장\"을 통해 다운로드한 '원본'으로 전송해 주셔야만 투표 집계 및 반영해 드리고 있습니다. 자세한 내용은 채팅방 하단 메뉴에서 '투표 인증 방법'을 클릭해 주세요.";
+        appendMessage('bot', msg, { plainText: true, fullWidth: true, copyText: msg });
+      };
 
       async function imagePerceptualHash(file){
         const url = URL.createObjectURL(file);
@@ -531,6 +496,24 @@
         }
         setStatus('대기 중'); processing = false;
       }
+
+      btnAssignAndDone.onclick = ()=>{
+        const info = summarizeForMessage();
+        if (info.error){ appendMessage('bot', info.error, {fullWidth:true}); return; }
+        const msg =
+          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
+          `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
+          `${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
+        appendMessage('bot', msg, { plainText:true, fullWidth:true, copyText: msg });
+      };
+      btnDone.onclick = ()=>{
+        const info = summarizeForMessage();
+        if (info.error){ appendMessage('bot', info.error, {fullWidth:true}); return; }
+        const msg =
+          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
+          `${info.assignUpper}님, ${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
+        appendMessage('bot', msg, { plainText:true, fullWidth:true, copyText: msg });
+      };
 
       assignBtn.onclick = ()=>{
         const s = assignInput.value.trim();
