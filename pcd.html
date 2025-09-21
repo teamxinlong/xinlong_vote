@@ -571,29 +571,36 @@
       }
 
       // ▶ 고유번호 부여+검수 완료
-      btnAssignAndDone.onclick = function(){
-        const info = summarizeForMessage();
-        if (info.error){ appendMessage('bot', info.error); return; }
+btnAssignAndDone.onclick = function(){
+  const info = summarizeForMessage();
+  if (info.error){ appendMessage('bot', info.error); return; }
 
-        const msg =
-          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
-          `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
-          `${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
+  const msg =
+    `씬롱이에게 소중한 투표 해주셔서 감사합니다 ❤\n` +
+    `\n` +
+    `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
+    `\n` +
+    `${info.dateLine}\n` +
+    `집계되었습니다. 감사합니다 😺❤`;
 
-        appendMessage('bot', msg, { plainText: true, copyText: msg });
-      };
+  appendMessage('bot', msg, { plainText: true, copyText: msg });
+};
 
-      // ▶ 검수 완료
-      btnDone.onclick = function(){
-        const info = summarizeForMessage();
-        if (info.error){ appendMessage('bot', info.error); return; }
+// ▶ 검수 완료
+btnDone.onclick = function(){
+  const info = summarizeForMessage();
+  if (info.error){ appendMessage('bot', info.error); return; }
 
-        const msg =
-          `씬롱이에게 소중한 투표 감사합니다 ❤\n` +
-          `${info.assignUpper}님, ${info.dateLine}\n집계되었습니다. 감사합니다 😺❤`;
+  const msg =
+    `씬롱이에게 소중한 투표 해주셔서 감사합니다 ❤\n` +
+    `\n` +
+    `${info.assignUpper}님,\n` +
+    `\n` +
+    `${info.dateLine}\n` +
+    `집계되었습니다. 감사합니다 😺❤`;
 
-        appendMessage('bot', msg, { plainText: true, copyText: msg });
-      };
+  appendMessage('bot', msg, { plainText: true, copyText: msg });
+};
 
       // ===== 중복 이미지 감지: 퍼셉추얼 해시 =====
       async function imagePerceptualHash(file){
