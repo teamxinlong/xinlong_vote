@@ -20,49 +20,57 @@
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
   <h1 class="text-2xl font-bold mb-4">🐱 허씬롱 마갤 자체제작 투표 집계 시스템(PC)💻 ✅</h1>
 
-  <!-- 채팅 -->
-  <div id="chatbox" class="w-full max-w-xl bg-white p-4 rounded shadow space-y-4 mb-4"></div>
+  <!-- 메인 레이아웃: 채팅(left) + 테이블(right) -->
+  <div class="flex w-full max-w-6xl gap-4">
+    <!-- 채팅 영역 -->
+    <div class="flex-1 flex flex-col">
+      <!-- 채팅창 -->
+      <div id="chatbox" class="bg-white p-4 rounded shadow space-y-4 mb-4 flex-1 overflow-y-auto"></div>
 
-  <!-- 입력창 (엔터/버튼 모두 지원) -->
-  <div class="w-full max-w-xl">
-    <form id="chatForm" class="flex items-center space-x-2">
-      <input type="text" id="chatInput" placeholder="고유번호(ex-aa0001) 입력 또는 인증샷을 붙여넣으세요..." class="flex-grow px-3 py-2 border rounded" autocomplete="off"/>
-      <button type="submit" id="sendBtn" class="bg-blue-600 text-white px-4 py-2 rounded btn">입력</button>
-    </form>
-  </div>
+      <!-- 입력창 -->
+      <div>
+        <form id="chatForm" class="flex items-center space-x-2">
+          <input type="text" id="chatInput" placeholder="고유번호(ex-aa0001) 입력 또는 인증샷을 붙여넣으세요..." class="flex-grow px-3 py-2 border rounded" autocomplete="off"/>
+          <button type="submit" id="sendBtn" class="bg-blue-600 text-white px-4 py-2 rounded btn">입력</button>
+        </form>
+      </div>
 
-  <!-- ▶ 검수 메시지 버튼 바 -->
-  <div id="actionBar" class="w-full max-w-xl flex gap-2 mt-3 mb-1">
-    <button id="btnAssignAndDone" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded btn">
-      고유번호 부여+검수 완료
-    </button>
-    <button id="btnDone" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded btn">
-      검수 완료
-    </button>
-  </div>
-
-  <!-- 결과 테이블 -->
-  <div id="resultPanel" class="w-full max-w-xl mt-2">
-    <div class="flex items-center justify-between mb-2">
-      <div class="text-sm text-gray-700">고유번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
-      <button id="copyAllBtn" class="text-xs px-3 py-1 rounded border btn">전체 복사</button>
+      <!-- 버튼 바 -->
+      <div id="actionBar" class="flex gap-2 mt-3 mb-1">
+        <button id="btnAssignAndDone" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded btn">
+          고유번호 부여+검수 완료
+        </button>
+        <button id="btnDone" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded btn">
+          검수 완료
+        </button>
+      </div>
     </div>
-    <div class="bg-white rounded shadow overflow-auto">
-      <table class="min-w-full text-sm">
-        <thead class="bg-gray-50">
-          <tr>
-            <th class="px-3 py-2 text-left">고유번호</th>
-            <th class="px-3 py-2 text-left">날짜</th>
-            <th class="px-3 py-2 text-left">시간</th>
-            <th class="px-3 py-2 text-left">시리얼넘버</th>
-          </tr>
-        </thead>
-        <tbody id="resultTbody">
-          <tr><td class="px-3 py-2 text-gray-400" colspan="4">데이터 없음</td></tr>
-        </tbody>
-      </table>
+
+    <!-- 결과 테이블 (오른쪽 배치) -->
+    <div id="resultPanel" class="w-96">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm text-gray-700">고유번호: <span id="assignLabel" class="mono font-semibold">미설정</span></div>
+        <button id="copyAllBtn" class="text-xs px-3 py-1 rounded border btn">전체 복사</button>
+      </div>
+      <div class="bg-white rounded shadow overflow-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-3 py-2 text-left">고유번호</th>
+              <th class="px-3 py-2 text-left">날짜</th>
+              <th class="px-3 py-2 text-left">시간</th>
+              <th class="px-3 py-2 text-left">시리얼넘버</th>
+            </tr>
+          </thead>
+          <tbody id="resultTbody">
+            <tr><td class="px-3 py-2 text-gray-400" colspan="4">데이터 없음</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
+</body>
+
 
   <script>
     (function(){
