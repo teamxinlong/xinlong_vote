@@ -109,8 +109,16 @@
         const msg = document.createElement('div');
         msg.className = sender === 'user' ? 'text-left' : 'text-left';
 
-        const wrapper = document.createElement('div');
-        wrapper.className = 'inline-block p-2 rounded shadow ' + (sender === 'user' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800');
+       const wrapper = document.createElement('div');
+
+if (sender === 'bot') {
+  // 시스템 메시지는 글자 작게
+  wrapper.className = 'inline-block p-2 rounded shadow bg-gray-200 text-gray-800 text-sm';
+} else {
+  // 유저 메시지는 기존 크기 유지
+  wrapper.className = 'inline-block p-2 rounded shadow bg-blue-100 text-blue-900';
+}
+
 
         const header = document.createElement('div');
         header.className = 'flex items-center gap-2 mb-1';
