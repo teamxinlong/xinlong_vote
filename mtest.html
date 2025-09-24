@@ -1,3 +1,4 @@
+09.23 집계메시지 추가 똑똑이 버전
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -17,19 +18,12 @@
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
-
   <h1 class="text-2xl font-bold mb-4">🐱 허씬롱 마갤 자체제작 투표 집계 시스템(PC)💻 ✅</h1>
-
-  <!-- 상단 고정 복사 버튼 -->
-  <button id="copyLastBtnTop" 
-    class="fixed top-2 right-2 bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded shadow">
-    마지막 메시지 복사
-  </button>
 
   <!-- 채팅 -->
   <div id="chatbox" class="w-full max-w-xl bg-white p-4 rounded shadow space-y-4 mb-4"></div>
 
-  <!-- 입력창 -->
+  <!-- 입력창 (엔터/버튼 모두 지원) -->
   <div class="w-full max-w-xl">
     <form id="chatForm" class="flex items-center space-x-2">
       <input type="text" id="chatInput" placeholder="고유번호(ex-aa0001) 입력 또는 인증샷을 붙여넣으세요..." class="flex-grow px-3 py-2 border rounded" autocomplete="off"/>
@@ -70,16 +64,18 @@
     </div>
   </div>
 
-  <!-- 하단 복사 버튼 -->
-  <div class="w-full max-w-xl flex justify-end mt-2">
-    <button id="copyLastBtnBottom" 
-      class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded shadow">
-      마지막 메시지 복사
-    </button>
-  </div>
-
   <script>
     (function(){
+      // 에러를 채팅창에 표시(디버깅)
+      window.addEventListener('error', function(e){
+        const box = document.getElementById('chatbox');
+        if (!box) return;
+        const div = document.createElement('div');
+        div.className = 'text-right';
+        div.innerHTML = '<div class="inline-block p-2 rounded shadow bg-red-100 text-red-800"><strong>🤖 시스템:</strong><br><pre style="white-space:pre-wrap">'+ String(e.error || e.message) +'</pre></div>';
+        box.appendChild(div);
+      });
+
       const chatbox = document.getElementById('chatbox');
       const chatForm = document.getElementById('chatForm');
       const chatInput = document.getElementById('chatInput');
@@ -88,36 +84,33 @@
       const resultTbody = document.getElementById('resultTbody');
       const btnAssignAndDone = document.getElementById('btnAssignAndDone');
       const btnDone = document.getElementById('btnDone');
-      const btnCopyTop = document.getElementById('copyLastBtnTop');
-      const btnCopyBottom = document.getElementById('copyLastBtnBottom');
 
-      let lastCopyText = ''; // 마지막 메시지 저장
-      let currentAssign = null;
-      const rows = [];
+      // 상태
+      let currentAssign = null;         // 'AA0001'
+      const rows = [];                  // { assign, date, time, code }
+      let worker = null;                // tesseract 재사용
+      const seenImageHashes = new Set();// 중복 방지용 퍼셉추얼 해시
 
+      // 유틸
       async function copyToClipboard(text) {
-        try {
-          await navigator.clipboard.writeText(text);
-          return true;
-        } catch(e) {
-          return false;
-        }
+        try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch(_) {}
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        let ok = false; try { ok = document.execCommand('copy'); } catch(_) {}
+        document.body.removeChild(ta); return ok;
       }
 
-      // 메시지 추가
       function appendMessage(sender, content, opts) {
         opts = opts || {};
         const plainText = !!opts.plainText;
         const copyText = opts.copyText || null;
 
-        if (copyText) lastCopyText = copyText;
-
         const msg = document.createElement('div');
-        msg.className = 'text-left';
+        msg.className = sender === 'user' ? 'text-left' : 'text-left';
 
         const wrapper = document.createElement('div');
-        wrapper.className = 'inline-block p-2 rounded shadow ' + 
-          (sender === 'user' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800 text-sm');
+        wrapper.className = 'inline-block p-2 rounded shadow ' + (sender === 'user' ? 'bg-blue-100 text-blue-900' : 'bg-gray-200 text-gray-800');
 
         const header = document.createElement('div');
         header.className = 'flex items-center gap-2 mb-1';
@@ -125,13 +118,23 @@
         label.innerText = sender === 'user' ? '👤 유저:' : '🤖 시스템:';
         header.appendChild(label);
 
+        if (sender === 'bot' && copyText) {
+          const copyBtn = document.createElement('button');
+          copyBtn.className = 'ml-2 text-xs px-2 py-1 rounded border btn';
+          copyBtn.innerText = '복사';
+          copyBtn.addEventListener('click', async function(){
+            const ok = await copyToClipboard(copyText);
+            copyBtn.innerText = ok ? '복사됨' : '복사실패';
+            setTimeout(function(){ copyBtn.innerText = '복사'; }, 1500);
+          });
+          header.appendChild(copyBtn);
+        }
+
         wrapper.appendChild(header);
 
         if (plainText) {
           const pre = document.createElement('pre');
-          pre.textContent = content;
-          pre.style.fontSize = "0.8rem";
-          pre.style.lineHeight = "1.1rem";
+          pre.textContent = content; // 탭/줄바꿈 보존
           wrapper.appendChild(pre);
         } else {
           const div = document.createElement('div');
@@ -144,21 +147,536 @@
         chatbox.scrollTop = chatbox.scrollHeight;
       }
 
-      // 공통 복사 함수
-      async function handleCopy(btn) {
-        if (!lastCopyText) {
-          alert("복사할 메시지가 없습니다.");
-          return;
-        }
-        const ok = await copyToClipboard(lastCopyText);
-        btn.innerText = ok ? "복사됨" : "복사 실패";
-        setTimeout(() => btn.innerText = "마지막 메시지 복사", 1500);
+      // 부여번호/테이블
+      function parseAssign(text){
+        var s = (text || '').trim();
+        return /^[A-Za-z]{2}\d{4}$/.test(s) ? s.toUpperCase() : null; // 자동 대문자화
       }
 
-      btnCopyTop.onclick = function(){ handleCopy(this); };
-      btnCopyBottom.onclick = function(){ handleCopy(this); };
+      function setAssign(assign){
+        currentAssign = assign.toUpperCase(); // 안전하게 대문자 보장
+        assignLabel.textContent = currentAssign || '미설정';
+        rows.length = 0; // 테이블 리셋
+        renderTable();
+      }
 
-      // ====== 여기 이후는 네가 기존 쓰던 OCR/집계 코드 그대로 두면 됨 ======
+      function addRow(date, time, code){
+        rows.push({ assign: currentAssign, date: (date||''), time: (time||''), code: (code||'') });
+        renderTable();
+      }
+
+      function renderTable(){
+        if (!rows.length){
+          resultTbody.innerHTML = '<tr><td class="px-3 py-2 text-gray-400" colspan="4">데이터 없음</td></tr>';
+          return;
+        }
+        var html = '';
+        for (var i=0;i<rows.length;i++){
+          var r = rows[i];
+          html += '<tr class="border-t">' +
+                    '<td class="px-3 py-2 mono">' + r.assign + '</td>' +
+                    '<td class="px-3 py-2 mono editable" contenteditable="true" data-field="date" data-index="'+ i +'" spellcheck="false">' + (r.date || '') + '</td>' +
+                    '<td class="px-3 py-2 mono editable" contenteditable="true" data-field="time" data-index="'+ i +'" spellcheck="false">' + (r.time || '') + '</td>' +
+                    '<td class="px-3 py-2 mono editable" contenteditable="true" data-field="code" data-index="'+ i +'" spellcheck="false">' + (r.code || '') + '</td>' +
+                  '</tr>';
+        }
+        resultTbody.innerHTML = html;
+      }
+
+      // 인라인 편집
+      resultTbody.addEventListener('keydown', function(e){
+        const el = e.target.closest ? e.target.closest('.editable') : null;
+        if (!el) return;
+        if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+      });
+      resultTbody.addEventListener('blur', function(e){
+        const el = e.target.closest ? e.target.closest('.editable') : null;
+        if (!el) return;
+        const idx = parseInt(el.getAttribute('data-index'), 10);
+        const field = el.getAttribute('data-field');
+        if (isNaN(idx) || !rows[idx] || !field) return;
+        const val = (el.innerText || '').trim();
+        rows[idx][field] = val;
+      }, true);
+
+      copyAllBtn.addEventListener('click', async function(){
+        var parts = [];
+        for (var i=0;i<rows.length;i++){
+          var r = rows[i];
+          parts.push(r.assign + '\t' + (r.date || '') + '\t' + (r.time || '') + '\t' + (r.code || ''));
+        }
+        var tsv = parts.join('\n');
+        var ok = await copyToClipboard(tsv);
+        var old = copyAllBtn.innerText;
+        copyAllBtn.innerText = ok ? '복사됨' : '복사실패';
+        setTimeout(function(){ copyAllBtn.innerText = old; }, 1500);
+      });
+
+      // 텍스트 입력 처리
+      function handleSend() {
+        var text = chatInput.value.trim();
+        if (!text) return;
+
+        appendMessage('user', text);
+        chatInput.value = '';
+
+        var assign = parseAssign(text);
+        if (assign) {
+          setAssign(assign);
+          appendMessage('bot', '고유번호 ' + currentAssign + ' 입니다.');
+        } else {
+          appendMessage('bot', '잘못된 접근입니다.');
+        }
+      }
+      chatForm.addEventListener('submit', function(e){ e.preventDefault(); handleSend(); });
+
+      // ===== OCR 전처리 =====
+      function toHalfwidth(str) {
+        return str.replace(/[\uFF01-\uFF5E]/g, function(ch){ return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); })
+                  .replace(/\u3000/g, ' ');
+      }
+      // ★ 변경: 얇은 점/제로폭 공백 포함 정규화
+      function normalizePunct(str){
+        return str
+          .replace(/\u00A0|\u2000|\u2001|\u2002|\u2003|\u2004|\u2005|\u2006|\u2007|\u2008|\u2009|\u200A|\u200B|\u200C|\u200D|\u202F|\u205F|\u3000|\uFEFF/g,' ')
+          .replace(/[:：]/g, ':')
+          .replace(/[．·。‧∙•⸱﹒｡]/g, '.')
+          .replace(/[／∕]/g, '/')
+          .replace(/[－–—‒―﹘﹣]/g, '-')
+          .replace(/[,，]/g, ',');
+      }
+      // ★ 변경: 끝자리 I/l → 1 보정 추가
+      function fixDigitLookalikes(str){
+        var prev;
+        do {
+          prev = str;
+          str = str
+            .replace(/(\d)[Oo](\d)/g, '$10$2')
+            .replace(/(\d)[lI](\d)/g, '$11$2')
+            .replace(/(\d)[Ss](\d)/g, '$15$2')
+            .replace(/(\d)[lI]\b/g,'$11')
+            .replace(/\b[lI](\d)/g,'1$1')
+            .replace(/([:.\-시hH])[Oo](\d)/g,'$10$2')
+            .replace(/(\d)[Oo]([:.\-시hH])/g,'$10$2')
+            .replace(/\b[Oo](\d)/g,'0$1')
+            .replace(/(\d)[Oo]\b/g,'$10');
+        } while (str !== prev);
+        return str;
+      }
+
+      // ----- 안내 문구 제거용 -----
+      function stripSerialNoise(s){
+        if (!s) return s;
+        const patterns = [
+          /이미지\s*저장/ig,
+          /투표인증서를\s*해시태그와\s*함께\s*공유해보세요!?/ig,
+          /#?\s*BOYS2PLANET/ig,
+          /#?\s*4thGlobalVote/ig,
+          /#?\s*MnetPlus/ig
+        ];
+        let out = s;
+        patterns.forEach(re => { out = out.replace(re, ''); });
+        return out;
+      }
+
+      // 날짜-시간 "붙은 쌍" 우선 추출
+      function extractFields(raw) {
+        var text = fixDigitLookalikes(normalizePunct(toHalfwidth(raw)));
+        var lines = text.split(/\n+/).map(function(l){ return l.trim(); }).filter(function(s){ return !!s; });
+        var whole = lines.join(' ');
+
+        var voteDate = '', voteTime = '', voteNo = '';
+
+        // ★ 변경: 2자리 연도 허용 + 날짜-시간 사이 특문/공백 허용(최대 5자)
+        function findDateTime(s){
+          var re = /\b(?:(20\d{2}|\d{2})[.\-\/]\s*)?(\d{1,2})[.\-\/]\s*(\d{1,2})[^\d]{0,5}([01]?\d|2[0-3])\s*[:.시hH]\s*([0-5]\d)/i;
+          var m = s.match(re);
+          if (!m) return null;
+          var y = m[1] ? (m[1].length===2 ? ('20'+m[1]) : m[1]) : String(new Date().getFullYear());
+          var mo = String(m[2]).padStart(2,'0'), d = String(m[3]).padStart(2,'0');
+          var hh = String(m[4]).padStart(2,'0'), mm = m[5];
+          return { date: y + '.' + mo + '.' + d, time: hh + ':' + mm };
+        }
+        function findDateOnly(s){
+          var m = s.match(/\b(20\d{2})[.\-\/]\s?(\d{1,2})[.\-\/]\s?(\d{1,2})\b/);
+          if (!m) m = s.match(/\b(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\b/);
+          return m ? (m[1] + '.' + String(m[2]).padStart(2,'0') + '.' + String(m[3]).padStart(2,'0')) : '';
+        }
+        function findTimeOnly(s){
+          var m = s.match(/\b([01]?\d|2[0-3])\s*[:시]\s*([0-5]\d)\b/);
+          if (!m) m = s.match(/\b([01]?\d|2[0-3])\s*[.\-hH]\s*([0-5]\d)\b/);
+          return m ? (String(m[1]).padStart(2,'0') + ':' + m[2]) : '';
+        }
+        function findNo(s){
+          s = stripSerialNoise(s);
+          var m = s.match(/N[o0]\.?\s*M[-_–—]\s*([A-Za-z0-9_\-\s]{4,512})/i);
+          if (!m) return '';
+          var core = m[1]
+            .replace(/\s+/g, '')
+            .replace(/[–—]/g, '-')
+            .replace(/[^A-Za-z0-9_-]+/g, '');
+          return 'No.M-' + core;
+        }
+
+        var dtWhole = findDateTime(whole);
+        if (dtWhole){ voteDate = dtWhole.date; voteTime = dtWhole.time; }
+
+        if (!voteDate || !voteTime){
+          for (var i=0;i<lines.length;i++){
+            var dti = findDateTime(lines[i]);
+            if (dti){ voteDate = voteDate || dti.date; voteTime = voteTime || dti.time; break; }
+
+            if (!voteDate || !voteTime){
+              var d = findDateOnly(lines[i]);
+              if (d){
+                var tHere = findTimeOnly(lines[i]);
+                var tNext = (i+1<lines.length) ? findTimeOnly(lines[i+1]) : '';
+                if (tHere || tNext){
+                  voteDate = voteDate || d;
+                  voteTime = voteTime || (tHere || tNext);
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        voteNo = findNo(whole);
+        if (!voteNo){
+          for (var j=0;j<lines.length;j++){ var v = findNo(lines[j]); if (v){ voteNo = v; break; } }
+        }
+
+        return { voteDate: voteDate, voteTime: voteTime, voteNo: voteNo };
+      }
+
+      /* ===============================
+         ▼ 정확도 향상: 필드별 프로파일 OCR
+         =============================== */
+      const DATE_WHITELIST   = '0123456789:. -/KST년월일시hH';
+      const SERIAL_WHITELIST = 'No.M-_/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+      const SERIAL_MAX = 30;
+
+      function clampSerialCore(core){
+        if (!core) return '';
+        let s = core.replace(/[^A-Za-z0-9_-]/g,'');
+        if (s.length > SERIAL_MAX) s = s.slice(0, SERIAL_MAX);
+        return s;
+      }
+
+      function enforceOutputSerial(mPrefixed){
+        let core = (mPrefixed || '').replace(/^No\.?\s*/i,'').replace(/^M-?/,'');
+        core = stripSerialNoise(core);
+        core = clampSerialCore(core);
+        return core ? ('M-' + core) : '';
+      }
+
+      async function recognizeRect(w, src, rect, params){
+        if (params && params.tessedit_pageseg_mode != null) {
+          await w.setParameters({ tessedit_pageseg_mode: params.tessedit_pageseg_mode });
+        }
+        if (params && params.tessedit_char_whitelist) {
+          await w.setParameters({ tessedit_char_whitelist: params.tessedit_char_whitelist });
+        }
+        const { data:{ text } } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
+        await w.setParameters({
+          tessedit_pageseg_mode: 6,
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        return text || '';
+      }
+
+      async function getWorker(){
+        if (worker) return worker;
+        worker = await Tesseract.createWorker();
+        await worker.load();
+        await worker.loadLanguage('eng');
+        await worker.initialize('eng');
+        await worker.setParameters({
+          tessedit_pageseg_mode: 6,
+          user_defined_dpi: '300',
+          preserve_interword_spaces: '1',
+          load_system_dawg: '0',
+          load_freq_dawg: '0',
+          language_model_penalty_non_dict_word: '0',
+          language_model_penalty_non_freq_dict_word: '0',
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        return worker;
+      }
+
+      function scoreSerial(s){
+        if (!s) return -1e9;
+        const len = s.length;
+        const amb = (s.match(/[OSIl]/g)||[]).length;
+        const rep = (s.match(/__|--/g)||[]).length;
+        return len*5 - amb*2 - rep*3;
+      }
+
+      async function recognizeSerialWithChoices(w, src, rect){
+        await w.setParameters({
+          tessedit_pageseg_mode: 7,
+          tessedit_char_whitelist: SERIAL_WHITELIST,
+          save_blob_choices: '1'
+        });
+        const { data } = await w.recognize(src, rect ? { rectangle: rect } : undefined);
+
+        // 기호 높이 중간값
+        const hs = [];
+        (data.symbols || []).forEach(s => {
+          const ch = s.text || '';
+          if (/[A-HJ-RT-Za-hj-rt-z0-9]/.test(ch)) {
+            const bb = s.bbox || s.box || {};
+            const h = (bb.y1 - bb.y0) || 0;
+            if (h) hs.push(h);
+          }
+        });
+        hs.sort((a,b)=>a-b);
+        const medianH = hs.length ? hs[Math.floor(hs.length/2)] : 0;
+
+        function bestFrom(sym, group){
+          if (!sym.choices || !sym.choices.length) return sym.text || '';
+          const cand = sym.choices
+            .filter(c => group.includes(c.text))
+            .sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0];
+          return (cand && cand.text) || (sym.text || '');
+        }
+
+        let out = '';
+        for (let i=0;i<(data.symbols||[]).length;i++){
+          const sym = data.symbols[i];
+          const prev = data.symbols[i-1]?.text || '';
+          const next = data.symbols[i+1]?.text || '';
+          const bb = sym.bbox || sym.box || {};
+          const h  = (bb.y1 - bb.y0) || 0;
+          let ch   = sym.text || '';
+
+          const G_O0 = ['O','o','0'];
+          const G_Il1= ['I','l','1'];
+          const G_S5 = ['S','s','5'];
+
+          if (G_Il1.includes(ch)){
+            let chosen = bestFrom(sym, G_Il1);
+            if (/\d/.test(prev) || /\d/.test(next)) chosen = '1';
+            if (medianH){
+              if (h >= medianH*1.06) chosen = 'l';
+              else if (h <= medianH*0.94) chosen = 'I';
+            }
+            ch = chosen;
+          } else if (G_O0.includes(ch)){
+            let chosen = bestFrom(sym, G_O0);
+            if (/\d/.test(prev) || /\d/.test(next)) chosen = '0';
+            ch = chosen;
+          } else if (G_S5.includes(ch)){
+            let chosen = bestFrom(sym, G_S5);
+            if (/\d/.test(prev) || /\d/.test(next)) chosen = '5';
+            ch = chosen;
+          }
+          out += ch;
+        }
+
+        await w.setParameters({
+          save_blob_choices: '0',
+          tessedit_pageseg_mode: 6,
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        return out;
+      }
+
+      // 스테이지드 OCR
+      async function ocrWithTesseract(srcOrFile) {
+        const w = await getWorker();
+
+        // 1) 전체 텍스트 1차 인식
+        const text0 = await recognizeRect(w, srcOrFile, null, {
+          tessedit_pageseg_mode: 6,
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 No.M-_:./'
+        });
+        let f = extractFields(text0);
+
+        // 이미지 크기(ROI 계산용)
+        let url = (typeof srcOrFile === 'string') ? srcOrFile : URL.createObjectURL(srcOrFile);
+        const img = new Image(); img.src = url; try { await img.decode(); } catch(_){}
+        const W = img.naturalWidth || 0, H = img.naturalHeight || 0;
+
+        // 2) 날짜/시간 부족 → 중앙부 라인 전용
+        if ((!f.voteDate || !f.voteTime) && W && H){
+          const midRect = { left: 0, top: Math.floor(H*0.35), width: W, height: Math.floor(H*0.35) };
+          const textMid = await recognizeRect(w, url, midRect, {
+            tessedit_pageseg_mode: 7,
+            tessedit_char_whitelist: DATE_WHITELIST
+          });
+          const fm = extractFields(textMid);
+          if (!f.voteDate) f.voteDate = fm.voteDate;
+          if (!f.voteTime) f.voteTime = fm.voteTime;
+        }
+
+        // 3) 시리얼 부족/짧음 → 하단 라인 전용 앙상블 + choices 보정
+        if ((!f.voteNo || f.voteNo.length < 10) && W && H){
+          const botRect = { left: 0, top: Math.floor(H*0.65), width: W, height: Math.floor(H*0.35) };
+
+          const tries = [];
+          const tChoices = await recognizeSerialWithChoices(w, url, botRect);
+          tries.push(tChoices);
+
+          const t1 = await recognizeRect(w, url, botRect, {
+            tessedit_pageseg_mode: 7,
+            tessedit_char_whitelist: SERIAL_WHITELIST
+          }); tries.push(t1);
+
+          const t2 = await recognizeRect(w, url, botRect, {
+            tessedit_pageseg_mode: 13,
+            tessedit_char_whitelist: SERIAL_WHITELIST
+          }); tries.push(t2);
+
+          const t3 = await recognizeRect(w, url, botRect, {
+            tessedit_pageseg_mode: 11,
+            tessedit_char_whitelist: SERIAL_WHITELIST
+          }); tries.push(t3);
+
+          const candidates = tries
+            .map(enforceOutputSerial)
+            .filter(x => /^M-[A-Za-z0-9_-]{4,}/.test(x));
+
+          if (candidates.length){
+            candidates.sort((a,b)=>scoreSerial(b)-scoreSerial(a));
+            const best = candidates[0];
+            if (!f.voteNo || scoreSerial(best) > scoreSerial(f.voteNo)) {
+              f.voteNo = best.replace(/^No\.?\s*/i,'');
+            }
+          }
+        }
+
+        return f;
+      }
+
+      // ----- 검수 메시지 생성 (날짜별 집계 포함) -----
+      function summarizeForMessage(){
+        if (!currentAssign) return { error: '고유번호를 먼저 입력하세요. 예) AA0001' };
+        if (rows.length === 0) return { error: '테이블에 데이터가 없습니다.' };
+
+        const byDate = {};
+        rows.forEach(r => { if (r.date) byDate[r.date] = (byDate[r.date] || 0) + 1; });
+
+        const dates = Object.keys(byDate).sort((a,b)=>a.localeCompare(b));
+        const parts = dates.map(d => {
+          const mmdd = d.replace(/^(\d{4})\.(\d{2})\.(\d{2}).*$/, '$2.$3');
+          return `${mmdd} ${byDate[d]}표`;
+        });
+        const dateLine = parts.join(', ');
+
+        return {
+          assignUpper: (currentAssign || '').toUpperCase(),
+          dateLine
+        };
+      }
+
+      // ▶ 고유번호 부여+검수 완료
+btnAssignAndDone.onclick = function(){
+  const info = summarizeForMessage();
+  if (info.error){ appendMessage('bot', info.error); return; }
+
+  const msg =
+    `씬롱이에게 소중한 투표 해주셔서 감사합니다 ❤\n` +
+    `\n` +
+    `부여된 고유번호는 ${info.assignUpper}입니다.\n` +
+    `\n` +
+    `${info.dateLine}\n` +
+    `집계되었습니다. 감사합니다 😺❤` +
+     `\n` +
+    `\n` +
+    `보내 주시는 응원의 메시지 항상 감사드립니다!🙏` +
+    `\n` +
+    `다만 원활한 집계를 위해, 인증서를 제외한 메시지는 따로 전송하지 말아 주시길 부탁드립니다❤` ;
+
+  appendMessage('bot', msg, { plainText: true, copyText: msg });
+};
+
+// ▶ 검수 완료
+btnDone.onclick = function(){
+  const info = summarizeForMessage();
+  if (info.error){ appendMessage('bot', info.error); return; }
+
+  const msg =
+    `씬롱이에게 소중한 투표 해주셔서 감사합니다 ❤\n` +
+    `\n` +
+    `${info.assignUpper}님,\n` +
+    `\n` +
+    `${info.dateLine}\n` +
+    `추가 집계되었습니다. 감사합니다 😺❤` +
+    `\n` +
+    `\n` +
+    `보내 주시는 응원의 메시지 항상 감사드립니다!🙏` +
+    `\n` +
+    `다만 원활한 집계를 위해, 인증서를 제외한 메시지는 따로 전송하지 말아 주시길 부탁드립니다❤` ;
+
+  appendMessage('bot', msg, { plainText: true, copyText: msg });
+};
+
+      // ===== 중복 이미지 감지: 퍼셉추얼 해시 =====
+      async function imagePerceptualHash(file){
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.src = url;
+        await img.decode().catch(()=>{});
+        const w = 64, h = 64;
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        const data = ctx.getImageData(0,0,w,h).data;
+        if (crypto && crypto.subtle) {
+          const digest = await crypto.subtle.digest('SHA-256', data);
+          const hex = Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+          return hex;
+        } else {
+          let hash = 0;
+          for (let i=0;i<data.length;i++) hash = (hash*31 + data[i]) >>> 0;
+          return 'fh-' + hash.toString(16);
+        }
+      }
+
+      // 이미지 붙여넣기 → OCR → 행 누적
+      window.addEventListener('paste', async function(e){
+        var items = (e.clipboardData && e.clipboardData.items) ? e.clipboardData.items : [];
+        for (var i=0;i<items.length;i++) {
+          var item = items[i];
+          if (item.kind === 'file' && item.type.indexOf('image/') === 0) {
+            var file = item.getAsFile();
+
+            // 1) 퍼셉추얼 해시 중복 검사
+            const ph = await imagePerceptualHash(file);
+            if (seenImageHashes.has(ph)) {
+              appendMessage('bot', '중복된 이미지입니다.');
+              continue;
+            }
+            seenImageHashes.add(ph);
+
+            var url = URL.createObjectURL(file);
+            appendMessage('user', '<img src="'+ url +'" class="max-w-xs mt-1 rounded border shadow">');
+
+            if (!currentAssign){
+              appendMessage('bot', '먼저 고유번호를 입력하세요. 예) <b>AA0001</b>');
+              continue;
+            }
+
+            var r = await ocrWithTesseract(file);
+            var codeOnly = enforceOutputSerial(r.voteNo || '');
+            var line = (r.voteDate || '❌') + '\t' + (r.voteTime || '❌') + '\t' + (codeOnly || '❌');
+            appendMessage('bot', line, { plainText: true, copyText: line });
+
+            addRow(r.voteDate || '', r.voteTime || '', codeOnly || '');
+          }
+        }
+      });
+
+      // 초기 렌더
+      renderTable();
+
+      // 페이지 떠날 때 워커 정리
+      window.addEventListener('beforeunload', async function(){
+        try { if (worker){ await worker.terminate(); worker=null; } } catch(_){}
+      });
     })();
   </script>
 </body>
